@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"syscall"
 	"time"
 )
 
@@ -134,15 +133,4 @@ func IsRunLockProcessAlive(meta *RunLockMetadata) bool {
 		return false
 	}
 	return processExists(meta.PID)
-}
-
-func processExists(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	err := syscall.Kill(pid, syscall.Signal(0))
-	if err == nil || err == syscall.EPERM {
-		return true
-	}
-	return false
 }

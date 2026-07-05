@@ -9,7 +9,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/alhasaniq/consortium/internal/benchloop"
@@ -219,14 +218,6 @@ func formatTimeIfSet(t time.Time) string {
 		return ""
 	}
 	return t.Format(time.RFC3339)
-}
-
-func processAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	err := syscall.Kill(pid, syscall.Signal(0))
-	return err == nil || err == syscall.EPERM
 }
 
 func readLockInfo(path string) (*benchloopLockInfo, error) {

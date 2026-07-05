@@ -5,12 +5,10 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -120,16 +118,7 @@ func RunAgent(
 	env = upsertEnv(env, "BENCHLOOP_CLAUDE_SESSION_ID", claudeSessionID)
 	cmd.Env = env
 
-	// Process group isolation: agent runs in its own group so we can
-	// kill the entire tree on context cancellation or crash cleanup.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error {
-		if cmd.Process != nil {
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		}
-		return nil
-	}
-	cmd.WaitDelay = 3 * time.Second
+	configureAgentProcess(cmd)
 
 	// Start process and record PID for crash recovery.
 	if err := cmd.Start(); err != nil {
@@ -226,23 +215,11 @@ func KillStaleAgent(workdir string) {
 		return
 	}
 
-	// Check if process exists.
-	if err := syscall.Kill(pid, 0); err != nil {
+	if !processExists(pid) {
 		_ = os.Remove(path)
 		return
 	}
 
-	// Guard against PID reuse: our agents run with Setpgid (PGID == PID).
-	// If the PID was recycled by an unrelated process, its PGID will differ.
-	pgid, err := syscall.Getpgid(pid)
-	if err != nil || pgid != pid {
-		log.Printf("Stale agent PID %d has PGID %d (expected %d) — PID was reused, skipping kill", pid, pgid, pid)
-		_ = os.Remove(path)
-		return
-	}
-
-	log.Printf("Killing stale agent process group (pid %d)", pid)
-	_ = syscall.Kill(-pid, syscall.SIGKILL) // Kill entire process group.
-	_ = syscall.Kill(pid, syscall.SIGKILL)  // Fallback: kill process directly.
+	killStaleAgentProcess(pid)
 	_ = os.Remove(path)
 }

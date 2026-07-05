@@ -1,0 +1,192 @@
+{
+  "created_at": "2026-06-23T00:00:00Z",
+  "description": "Reusable L0 aggregation workflow that groups answer camps and judges disagreement",
+  "edges": [
+    {
+      "id": "edge-input-extract",
+      "source": "input-contract",
+      "target": "op-extract-answer"
+    },
+    {
+      "id": "edge-extract-camps",
+      "source": "op-extract-answer",
+      "target": "op-group-camps"
+    },
+    {
+      "id": "edge-camps-judge",
+      "source": "op-group-camps",
+      "target": "agent-camp-judge"
+    },
+    {
+      "id": "edge-judge-select",
+      "source": "agent-camp-judge",
+      "target": "op-select-winner"
+    },
+    {
+      "id": "edge-select-result",
+      "source": "op-select-winner",
+      "target": "result-aggregation"
+    }
+  ],
+  "id": "aggregation-debate-decide",
+  "metadata": {
+    "tags": [
+      "aggregation",
+      "debate-decide"
+    ],
+    "input_contract": {
+      "aggregation_config": "camp judge model, prompt, and extraction settings",
+      "candidate_ids": "ordered IDs for upstream candidate nodes",
+      "candidate_models": "model IDs keyed by candidate ID",
+      "candidates": "ordered candidate outputs",
+      "user_prompt": "original user prompt"
+    }
+  },
+  "name": "Aggregation Debate Decide",
+  "nodes": [
+    {
+      "data": {
+        "config": {
+          "description": "Parent-supplied aggregation inputs",
+          "name": "aggregation_inputs",
+          "schema": {
+            "aggregation_config": {
+              "required": false,
+              "type": "object"
+            },
+            "candidate_ids": {
+              "required": false,
+              "type": "array"
+            },
+            "candidate_models": {
+              "required": false,
+              "type": "object"
+            },
+            "candidates": {
+              "required": true,
+              "type": "array"
+            },
+            "user_prompt": {
+              "required": true,
+              "type": "string"
+            }
+          }
+        },
+        "label": "Aggregation Inputs",
+        "type": "input"
+      },
+      "id": "input-contract",
+      "position": {
+        "x": 260,
+        "y": 80
+      },
+      "type": "input"
+    },
+    {
+      "data": {
+        "config": {
+          "description": "Extract answer labels from candidates",
+          "name": "Extract Answers",
+          "operationConfig": {
+            "text": "{{candidates}}"
+          },
+          "operationType": "extract_answer"
+        },
+        "label": "Extract Answers",
+        "type": "operation"
+      },
+      "id": "op-extract-answer",
+      "position": {
+        "x": 120,
+        "y": 370
+      },
+      "type": "operation"
+    },
+    {
+      "data": {
+        "config": {
+          "description": "Group candidates into answer camps",
+          "name": "Group Answer Camps",
+          "operationConfig": {
+            "items": "{{answer_items}}"
+          },
+          "operationType": "group_answer_camps"
+        },
+        "label": "Group Answer Camps",
+        "type": "operation"
+      },
+      "id": "op-group-camps",
+      "position": {
+        "x": 120,
+        "y": 720
+      },
+      "type": "operation"
+    },
+    {
+      "data": {
+        "config": {
+          "maxTokens": -1,
+          "model": "deepseek/deepseek-v4-pro",
+          "name": "Camp Judge",
+          "systemPrompt": "You are an impartial judge comparing answer camps. Select the camp with the strongest reasoning, not the largest camp by default.",
+          "temperature": 0.2,
+          "timeoutSeconds": 180,
+          "userPrompt": "Original prompt:\n{{user_prompt}}\n\nAnswer camps:\n{{op-group-camps}}\n\nReturn JSON with winner and reason.",
+          "retryPolicy": {
+            "max_attempts": 1
+          }
+        },
+        "label": "Camp Judge",
+        "type": "agent"
+      },
+      "id": "agent-camp-judge",
+      "position": {
+        "x": 120,
+        "y": 1070
+      },
+      "type": "agent"
+    },
+    {
+      "data": {
+        "config": {
+          "description": "Select the winning camp output",
+          "name": "Select Winner",
+          "operationConfig": {
+            "outputs": "{{candidate_outputs}}",
+            "scores": "{{camp_scores}}"
+          },
+          "operationType": "select_winner"
+        },
+        "label": "Select Winner",
+        "type": "operation"
+      },
+      "id": "op-select-winner",
+      "position": {
+        "x": 120,
+        "y": 1420
+      },
+      "type": "operation"
+    },
+    {
+      "data": {
+        "config": {
+          "aggregationMethod": "collect",
+          "name": "aggregation_result",
+          "outputFormat": "text",
+          "retryPolicy": {
+            "max_attempts": 1
+          }
+        },
+        "label": "Aggregation Result",
+        "type": "result"
+      },
+      "id": "result-aggregation",
+      "position": {
+        "x": 240,
+        "y": 1770
+      },
+      "type": "result"
+    }
+  ],
+  "updated_at": "2026-06-23T00:00:00Z"
+}

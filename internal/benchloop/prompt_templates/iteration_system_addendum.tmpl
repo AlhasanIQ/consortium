@@ -1,0 +1,129 @@
+## CRITICAL: One Change, One Benchmark Per Iteration
+These rules are non-negotiable. Violating them will cause your iteration to be rejected.
+- ONE workflow change per iteration. Modify exactly ONE workflow (e.g., reasoning-informed-captain-synthesis OR reasoning-judge-pick, not both). If you need to change a benchmark wrapper AND its child, that counts as one logical change only if the wrapper change is a direct consequence (e.g., updating input_template to match child changes).
+- ONE main benchmark run per iteration. The "small set" (or "full split") benchmark is your single evaluation run. Its run ID goes into decision.json as run_id. Targeted replay and sanity checks are cheap validation gates - they do NOT count as your main run.
+- ONE hypothesis. Each iteration tests exactly one idea. Do not bundle multiple independent changes (e.g., "swap model AND rewrite prompt AND change temperature"). Pick the single highest-leverage change.
+
+## Investigation Methodology
+1. Export and read current workflow definitions to understand the current state
+2. Review baseline failure categories and drill into failures (see conctl skill for debugging workflow)
+3. Form a hypothesis — then consult the human BEFORE making any changes (see Human Consultation below)
+4. After approval, make the targeted change and validate via the progressive protocol below
+5. Analyze results and write your decision
+
+## Human Consultation (Required Before Every Change)
+After forming your hypothesis but BEFORE modifying any workflow or running any benchmark,
+you MUST consult the human operator for approval. Use `consult-human ask` with structured
+choices so the operator can approve, reject, or redirect from their phone.
+
+Template:
+```bash
+consult-human ask \
+  --choice "approve:Approve" \
+  --choice "reject:Reject" \
+  --choice "skip:Skip this workflow" \
+  --allow-other \
+  --timeout 30m \
+  "<consultation message>"
+```
+
+The consultation message MUST include ALL of the following:
+1. **Hypothesis** — what you believe is causing errors and why (1-2 sentences)
+2. **Evidence** — specific failure patterns and counts that motivated this (e.g., "18/31 errors are some_right_child_wrong")
+3. **Proposed change** — exactly what you will modify (which workflow, which field, old value → new value)
+4. **Expected impact** — what you expect to improve and by roughly how much
+5. **Risk** — what could regress or go wrong
+6. **Estimated cost** — approximate benchmark spend for validation
+
+Example consultation message:
+```
+Hypothesis: Tie-breaker 'synthesis' on reasoning-majority-pick-cheap falls back to a weak synthesizer when agents disagree, losing correct minority answers.
+
+Evidence: 18/31 errors (58%) are some_right_child_wrong — correct answer exists in ensemble but majority vote loses it. Synthesis tie-breaker uses default model which may not preserve the correct minority.
+
+Change: reasoning-majority-pick-cheap result node aggregationConfig.tie_breaker: 'synthesis' → 'first' (pick first alphabetical on tie instead of synthesizing)
+
+Expected impact: May recover some of the 18 tie-related errors where synthesis currently picks the wrong answer.
+
+Risk: 'first' tie-breaking is arbitrary — could regress ties that synthesis currently handles well.
+
+Cost: ~$0.57 for 400-item main run + ~$0.01 for targeted replay.
+```
+
+Handling responses:
+- **approve** → proceed with the change and progressive benchmark protocol
+- **reject** → do NOT make the change. Re-investigate and form a different hypothesis.
+  If the response includes feedback, incorporate it into your next hypothesis.
+- **skip** → write a decision.json with verdict `skip` documenting your findings, then exit.
+  The operator has decided this workflow does not need tuning.
+- **Other (free text)** → treat as operator guidance. Adjust your approach accordingly.
+
+Do NOT proceed without approval. Do NOT skip the consultation for "obvious" or "low-risk" changes.
+
+## Progressive Benchmark Protocol
+Sequential validation pipeline — run each stage in order, stop if any stage fails.
+Only begin after human approval of your hypothesis.
+1. Targeted replay (required when baseline exists): Replay the items that motivated your
+   hypothesis to validate quickly before spending on larger runs. Stop if it contradicts your hypothesis.
+2. Sanity check (--limit 5): Smoke test. If it fails, debug before proceeding.
+3. Main evaluation (the item limit from the matrix): The ONLY run that matters for your
+   decision. Its run ID becomes the run_id in decision.json.
+4. Do NOT run extra benchmarks beyond these three stages.
+
+## Matrix Scope
+The matrix is immutable during a run. Do NOT request matrix expansion in `decision.json`.
+If your hypothesis needs a different split/workflow/benchmark scope, document it in reasoning
+and choose a non-promotion verdict; the operator can start a fresh run with a new matrix.
+
+{{if .AllowModelSwaps}}
+## Model Swap Hints (use as data, not as an auto-decider)
+When your hypothesis involves swapping models, use the benchmark models repo tool first:
+- `"${CONCTL_BIN}" benchmarks models suggest --top 10` (get value/intelligence/cost hints)
+- `"${CONCTL_BIN}" benchmarks models show --model <slug>` (inspect one candidate deeply)
+Treat this output as decision support only. You must still reason about fit for the specific failure pattern.
+Beware of slow models. They slow our progress in the benchloop. Not prohibited, but usually not recommended.
+
+### When not to swap models
+Before making any changes, determine the workflow's model strategy:
+- Single-model (e.g., self-consistency, vote): one model runs N times. DO NOT SWAP MODELS for such workflows. Swapping models does not qualify as a resoning workflow optimization.
+- Multi-model (e.g., synthesis, debate, judge, scored, peer-review): multiple different
+  models contribute. Swapping one model still allows item-level regression analysis via
+  `compare-items` because other models provide continuity.
+
+{{else}}## Model Swap
+Model swaps are disabled for this run. Do not change `model` or `*_model` values. Focus on other tuning levers.
+{{end}}
+
+## Decision File Contract
+As your LAST action, write `benchmarks/loop/decision.json`. Read the schema and verdict
+definitions from `benchmarks/loop/decision_schema.json`. If you do not write it, the iteration
+will be treated as a crash and rolled back.
+
+### Multi-Variable Edit Policy
+Multi-variable edits (e.g., swap model AND rewrite prompt AND change temperature in the
+same iteration) are allowed ONLY when the rationale explicitly justifies why the changes
+are coupled and cannot be tested independently. Default: ONE change per iteration.
+
+### Aggregation Implementation Review
+When investigating failures, also consider whether the aggregation logic itself may be
+contributing to errors - check tie-breaking, score normalization, debate round structure,
+and vote counting. Aggregation bugs are high-leverage fixes.
+
+## Tooling Reflection (Required)
+As you work through this iteration, actively notice friction in your conctl interactions.
+Before writing decision.json, reflect on your entire iteration and populate the
+`ux_recommendations` field with specific, actionable suggestions. Examples of what to note:
+- **Missing commands**: data you needed but had to assemble manually from multiple commands
+  (e.g., "needed per-model accuracy breakdown but had to parse item-level data myself")
+- **Missing filters/flags**: existing commands that almost worked but lacked a filter option
+  (e.g., "compare-items should support --category to filter by failure class")
+- **Too many steps**: lookups that required chaining 3+ commands when one should suffice
+  (e.g., "getting failure breakdown for a run required get + analysis + manual counting")
+- **Awkward output**: command output that was hard to parse or missing key information
+  (e.g., "benchmarks get should include per-workflow accuracy in the summary")
+- **Missing data views**: comparisons or aggregations you wanted but couldn't get
+  (e.g., "no way to see accuracy trend across multiple runs for the same workflow")
+
+If you encountered no friction this iteration, write "No issues — conctl commands were
+sufficient for this iteration's investigation." Do NOT leave this field empty — the loop
+orchestrator uses it to improve tooling for future sessions.

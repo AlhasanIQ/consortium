@@ -1,0 +1,171 @@
+{
+  "version": "1.0.0",
+  "id": "benchmark-self-consistency-majority-pick",
+  "name": "Benchmark Self-Consistency Majority Pick",
+  "description": "Parent benchmark wrapper for reasoning-self-consistency-majority-pick with strict benchmark_answer output",
+  "created_at": "2026-02-14T00:00:00Z",
+  "updated_at": "2026-02-14T00:00:00Z",
+  "nodes": [
+    {
+      "id": "input-prompt",
+      "type": "input",
+      "position": {
+        "x": 260,
+        "y": 80
+      },
+      "data": {
+        "type": "input",
+        "label": "Benchmark Question",
+        "config": {
+          "description": "A multiple-choice benchmark question with labeled options",
+          "maxTokens": -1,
+          "name": "user_prompt",
+          "schema": {
+            "user_prompt": {
+              "required": true,
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "child-reasoning-self-consistency-majority-pick",
+      "type": "child_workflow",
+      "position": {
+        "x": 210,
+        "y": 370
+      },
+      "data": {
+        "type": "child_workflow",
+        "label": "Run Self-Consistency Majority Pick Child",
+        "config": {
+          "await": true,
+          "childWorkflowId": "reasoning-self-consistency-majority-pick",
+          "description": "Executes reasoning-self-consistency-majority-pick as a child workflow",
+          "inputTemplate": {
+            "user_prompt": "You are solving a multiple-choice question.\nChoose exactly one option and explain briefly why it is correct and not other options.\nRespond in this format:\nFinal answer: <ONE UPPERCASE LETTER>\nReasoning: <concise reasoning>\n\n{{user_prompt}}\n\nRemember: include both the final answer line and a brief reasoning line."
+          },
+          "maxTokens": -1,
+          "name": "Run Self-Consistency Majority Pick Child",
+          "outputKey": "consistent_response",
+          "timeoutSeconds": 900,
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000
+          }
+        }
+      }
+    },
+    {
+      "id": "agent-contract",
+      "type": "contract_extract",
+      "position": {
+        "x": 120,
+        "y": 700
+      },
+      "data": {
+        "type": "contract_extract",
+        "label": "Benchmark Contract",
+        "config": {
+          "sourceVariable": "child-reasoning-self-consistency-majority-pick",
+          "extractionPatterns": [
+            "^\\s*([A-Za-z])\\s*$",
+            "(?i)\\b(?:final\\s+answer|answer)\\b(?:\\s+is)?\\s*[:\\-]?\\s*\\(?\\s*([A-Za-z])\\s*\\)?\\s*(?:$|\\n|[^A-Za-z])",
+            "^\\s*\\(?\\s*([A-Za-z])\\s*\\)?[\\.\\):\\-]"
+          ],
+          "maxTokens": 1024,
+          "model": "deepseek/deepseek-v4-pro",
+          "name": "Benchmark Contract",
+          "openRouterReasoning": {
+            "effort": "none"
+          },
+          "provider": "openrouter",
+          "systemPrompt": "You are a benchmark answer extractor, not a solver. Use ONLY the text in the section titled \"Reasoning answer\" as the source of truth. Do NOT use external knowledge or re-evaluate the question. Extract the final selected option from that section and return exactly one uppercase letter (A-Z), with no punctuation or explanation.",
+          "temperature": 0,
+          "timeoutSeconds": 20,
+          "userPrompt": "Question and options:\n{{user_prompt}}\n\nReasoning answer (source of truth):\n{{child-reasoning-self-consistency-majority-pick}}\n\nDo NOT solve the question. Read the Reasoning answer section and return only the extracted final option letter:",
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000
+          }
+        }
+      }
+    },
+    {
+      "id": "aggregation-benchmark-answer",
+      "type": "aggregation",
+      "position": {
+        "x": 210,
+        "y": 1050
+      },
+      "data": {
+        "type": "aggregation",
+        "label": "Benchmark Answer Aggregation",
+        "config": {
+          "name": "Benchmark Answer Aggregation",
+          "description": "Canonical benchmark answer output",
+          "aggregationMethod": "collect",
+          "aggregationConfig": {},
+          "timeoutSeconds": 120,
+          "retryPolicy": {
+            "max_attempts": 1
+          },
+          "benchmarkOutputPackaging": true
+        }
+      }
+    },
+    {
+      "id": "result-benchmark-answer",
+      "type": "result",
+      "position": {
+        "x": 240,
+        "y": 1420
+      },
+      "data": {
+        "type": "result",
+        "label": "Benchmark Answer",
+        "config": {
+          "name": "benchmark_answer",
+          "description": "Canonical benchmark answer output",
+          "outputFormat": "text"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge-input-child",
+      "source": "input-prompt",
+      "target": "child-reasoning-self-consistency-majority-pick"
+    },
+    {
+      "id": "edge-child-contract",
+      "source": "child-reasoning-self-consistency-majority-pick",
+      "target": "agent-contract"
+    },
+    {
+      "id": "edge-agent-contract-aggregation-benchmark-answer",
+      "source": "agent-contract",
+      "target": "aggregation-benchmark-answer"
+    },
+    {
+      "id": "edge-aggregation-benchmark-answer-result-benchmark-answer",
+      "source": "aggregation-benchmark-answer",
+      "target": "result-benchmark-answer"
+    }
+  ],
+  "metadata": {
+    "tags": [
+      "benchmark",
+      "experimental",
+      "parent",
+      "reasoning-self-consistency-majority-pick",
+      "wrapper"
+    ]
+  }
+}

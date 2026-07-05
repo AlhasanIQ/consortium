@@ -1,0 +1,221 @@
+{
+  "version": "1.0.0",
+  "id": "reasoning-self-consistency-majority-pick",
+  "name": "Self-Consistency Majority Pick",
+  "description": "Self-consistency reasoning workflow — same model queried 3 times at higher temperature, majority vote selects the most consistent answer",
+  "created_at": "2026-02-14T00:00:00Z",
+  "updated_at": "2026-02-14T00:00:00Z",
+  "nodes": [
+    {
+      "id": "input-prompt",
+      "type": "input",
+      "position": {
+        "x": 856,
+        "y": 80
+      },
+      "data": {
+        "type": "input",
+        "label": "User Prompt",
+        "config": {
+          "description": "The question to send for self-consistency evaluation",
+          "maxTokens": -1,
+          "name": "user_prompt",
+          "schema": {
+            "user_prompt": {
+              "required": true,
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "agent-sample-1",
+      "type": "agent",
+      "position": {
+        "x": 1312,
+        "y": 370
+      },
+      "data": {
+        "type": "agent",
+        "label": "DeepSeek V4 Pro",
+        "config": {
+          "maxTokens": -1,
+          "model": "deepseek/deepseek-v4-pro",
+          "name": "DeepSeek V4 Pro",
+          "openRouterReasoning": {
+            "effort": "high"
+          },
+          "provider": "openrouter",
+          "systemPrompt": "You are an expert problem solver. Think through problems carefully:\n1. Identify what is being asked\n2. Consider the key facts and evidence\n3. Reason step by step through the problem\n4. Check your reasoning for errors or gaps\n5. State your final answer clearly\n\nBe precise and thorough. If you are uncertain, explain why.",
+          "temperature": 0.5,
+          "timeoutSeconds": 180,
+          "userPrompt": "{{user_prompt}}",
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000
+          }
+        }
+      }
+    },
+    {
+      "id": "agent-sample-2",
+      "type": "agent",
+      "position": {
+        "x": 716,
+        "y": 370
+      },
+      "data": {
+        "type": "agent",
+        "label": "DeepSeek V4 Pro",
+        "config": {
+          "maxTokens": -1,
+          "model": "deepseek/deepseek-v4-pro",
+          "name": "DeepSeek V4 Pro",
+          "openRouterReasoning": {
+            "effort": "high"
+          },
+          "provider": "openrouter",
+          "systemPrompt": "You are an expert problem solver. Think through problems carefully:\n1. Identify what is being asked\n2. Consider the key facts and evidence\n3. Reason step by step through the problem\n4. Check your reasoning for errors or gaps\n5. State your final answer clearly\n\nBe precise and thorough. If you are uncertain, explain why.",
+          "temperature": 0.5,
+          "timeoutSeconds": 180,
+          "userPrompt": "{{user_prompt}}",
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000
+          }
+        }
+      }
+    },
+    {
+      "id": "agent-sample-3",
+      "type": "agent",
+      "position": {
+        "x": 120,
+        "y": 370
+      },
+      "data": {
+        "type": "agent",
+        "label": "DeepSeek V4 Pro",
+        "config": {
+          "maxTokens": -1,
+          "model": "deepseek/deepseek-v4-pro",
+          "name": "DeepSeek V4 Pro",
+          "openRouterReasoning": {
+            "effort": "high"
+          },
+          "provider": "openrouter",
+          "systemPrompt": "You are an expert problem solver. Think through problems carefully:\n1. Identify what is being asked\n2. Consider the key facts and evidence\n3. Reason step by step through the problem\n4. Check your reasoning for errors or gaps\n5. State your final answer clearly\n\nBe precise and thorough. If you are uncertain, explain why.",
+          "temperature": 0.5,
+          "timeoutSeconds": 180,
+          "userPrompt": "{{user_prompt}}",
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000
+          }
+        }
+      }
+    },
+    {
+      "id": "aggregation-vote",
+      "type": "aggregation",
+      "position": {
+        "x": 806,
+        "y": 720
+      },
+      "data": {
+        "type": "aggregation",
+        "label": "Majority Vote Aggregation",
+        "config": {
+          "name": "Majority Vote Aggregation",
+          "description": "The most consistent answer selected by majority vote",
+          "aggregationMethod": "majority_vote",
+          "aggregationConfig": {
+            "extraction_strategy": "regex",
+            "tie_breaker_method": "synthesis",
+            "tie_breaker_model": "deepseek/deepseek-v4-pro",
+            "tie_breaker_temperature": 0,
+            "extraction_pattern": "(?im)(?:^|\\n|[^\\n]{0,60}\\b)(?:final answer|answer)\\s*(?:(?:is)?\\s*[:\\-]\\s*(?:\\(?([A-Z])\\)?\\s*(?:[.)]?\\s*$|\\s+(?:is|was|are|because|since|as|therefore|so)\\b)|\\(?([^\\n)]{1,80}?)\\)?\\s*(?:[.;]\\s*$|$|\\n|[.;]\\s+(?:because|since|as|this|the|it)\\b|,?\\s+(?:because|since|as|therefore|so)\\b))|is\\s*:?\\s*(?:\\(?([A-Z])\\)?\\s*(?:[.)]?\\s*$|\\s+(?:is|was|are|because|since|as|therefore|so)\\b)|([-+]?(?:\\d+(?:\\.\\d+)?|[A-Z]\\s*=\\s*[-+]?\\d+(?:\\.\\d+)?))\\s*(?:[.;]?\\s*$|,?\\s+(?:because|since|as|therefore|so)\\b)))",
+            "system_prompt": "You are a synthesis agent that has received responses from multiple AI advisors. Your job is to deliver the definitive answer — informed by all responses but relying on your own judgment.\n\nRules:\n1. Analyze each response for correctness, completeness, and reasoning quality.\n2. Construct your answer using the strongest reasoning and evidence across all responses.\n3. Where responses conflict, use your judgment to determine which reasoning is more sound — do not default to the majority or to any single response.\n4. If responses use a structured answer format (e.g. \"Final answer: X\"), preserve that format in your synthesis.\n5. End with a clear, definitive conclusion.",
+            "prompt": "Original Question: {{prompt}}\n\n{{responses}}\n\nPlease provide a synthesized response that captures the best insights from all models.",
+            "max_tokens": -1
+          },
+          "timeoutSeconds": 120,
+          "retryPolicy": {
+            "max_attempts": 1
+          },
+          "aggregationWorkflowId": "aggregation-majority-vote"
+        }
+      }
+    },
+    {
+      "id": "result-vote",
+      "type": "result",
+      "position": {
+        "x": 836,
+        "y": 1090
+      },
+      "data": {
+        "type": "result",
+        "label": "Majority Vote Result",
+        "config": {
+          "name": "consistent_response",
+          "description": "The most consistent answer selected by majority vote",
+          "outputFormat": "text"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge-input-prompt-agent-sample-1",
+      "source": "input-prompt",
+      "target": "agent-sample-1"
+    },
+    {
+      "id": "edge-input-prompt-agent-sample-2",
+      "source": "input-prompt",
+      "target": "agent-sample-2"
+    },
+    {
+      "id": "edge-input-prompt-agent-sample-3",
+      "source": "input-prompt",
+      "target": "agent-sample-3"
+    },
+    {
+      "id": "edge-agent-sample-1-aggregation-vote",
+      "source": "agent-sample-1",
+      "target": "aggregation-vote"
+    },
+    {
+      "id": "edge-agent-sample-2-aggregation-vote",
+      "source": "agent-sample-2",
+      "target": "aggregation-vote"
+    },
+    {
+      "id": "edge-agent-sample-3-aggregation-vote",
+      "source": "agent-sample-3",
+      "target": "aggregation-vote"
+    },
+    {
+      "id": "edge-aggregation-vote-result-vote",
+      "source": "aggregation-vote",
+      "target": "result-vote"
+    }
+  ],
+  "metadata": {
+    "tags": [
+      "experimental",
+      "majority-vote",
+      "reasoning",
+      "self-consistency",
+      "single-model"
+    ]
+  }
+}

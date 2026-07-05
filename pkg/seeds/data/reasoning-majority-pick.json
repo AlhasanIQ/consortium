@@ -1,0 +1,219 @@
+{
+  "created_at": "2026-02-14T00:00:00Z",
+  "description": "Multi-model reasoning workflow — queries multiple LLMs in parallel and selects the majority answer",
+  "edges": [
+    {
+      "id": "edge-input-prompt-agent-mimo-pro",
+      "source": "input-prompt",
+      "target": "agent-mimo-pro"
+    },
+    {
+      "id": "edge-input-prompt-agent-deepseek-pro",
+      "source": "input-prompt",
+      "target": "agent-deepseek-pro"
+    },
+    {
+      "id": "edge-input-prompt-agent-minimax",
+      "source": "input-prompt",
+      "target": "agent-minimax"
+    },
+    {
+      "id": "edge-agent-mimo-pro-aggregation-vote",
+      "source": "agent-mimo-pro",
+      "target": "aggregation-vote"
+    },
+    {
+      "id": "edge-agent-deepseek-pro-aggregation-vote",
+      "source": "agent-deepseek-pro",
+      "target": "aggregation-vote"
+    },
+    {
+      "id": "edge-agent-minimax-aggregation-vote",
+      "source": "agent-minimax",
+      "target": "aggregation-vote"
+    },
+    {
+      "id": "edge-aggregation-vote-result-vote",
+      "source": "aggregation-vote",
+      "target": "result-vote"
+    }
+  ],
+  "id": "reasoning-majority-pick",
+  "metadata": {
+    "tags": [
+      "majority-vote",
+      "multi-model",
+      "reasoning"
+    ]
+  },
+  "name": "Majority Pick",
+  "nodes": [
+    {
+      "data": {
+        "config": {
+          "description": "The question or prompt to send to all council members",
+          "maxTokens": -1,
+          "name": "user_prompt",
+          "schema": {
+            "user_prompt": {
+              "required": true,
+              "type": "string"
+            }
+          }
+        },
+        "label": "User Prompt",
+        "type": "input"
+      },
+      "id": "input-prompt",
+      "position": {
+        "x": 856,
+        "y": 80
+      },
+      "type": "input"
+    },
+    {
+      "data": {
+        "config": {
+          "maxTokens": -1,
+          "model": "xiaomi/mimo-v2.5-pro",
+          "name": "MiMo V2.5 Pro",
+          "openRouterReasoning": {
+            "effort": "high"
+          },
+          "provider": "openrouter",
+          "systemPrompt": "You are an expert problem solver. Think through problems carefully:\n1. Identify what is being asked\n2. Consider the key facts and evidence\n3. Reason step by step through the problem\n4. Check your reasoning for errors or gaps\n5. State your final answer clearly\n\nBe precise and thorough. If you are uncertain, explain why.",
+          "temperature": 0.2,
+          "timeoutSeconds": 180,
+          "userPrompt": "{{user_prompt}}",
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000
+          }
+        },
+        "label": "MiMo V2.5 Pro",
+        "type": "agent"
+      },
+      "id": "agent-mimo-pro",
+      "position": {
+        "x": 716,
+        "y": 370
+      },
+      "type": "agent"
+    },
+    {
+      "data": {
+        "config": {
+          "maxTokens": -1,
+          "model": "deepseek/deepseek-v4-pro",
+          "name": "DeepSeek V4 Pro",
+          "openRouterReasoning": {
+            "effort": "high"
+          },
+          "provider": "openrouter",
+          "systemPrompt": "You are an expert problem solver. Think through problems carefully:\n1. Identify what is being asked\n2. Consider the key facts and evidence\n3. Reason step by step through the problem\n4. Check your reasoning for errors or gaps\n5. State your final answer clearly\n\nBe precise and thorough. If you are uncertain, explain why.",
+          "temperature": 0.2,
+          "timeoutSeconds": 180,
+          "userPrompt": "{{user_prompt}}",
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000
+          }
+        },
+        "label": "DeepSeek V4 Pro",
+        "type": "agent"
+      },
+      "id": "agent-deepseek-pro",
+      "position": {
+        "x": 1312,
+        "y": 370
+      },
+      "type": "agent"
+    },
+    {
+      "data": {
+        "config": {
+          "maxTokens": -1,
+          "model": "minimax/minimax-m3",
+          "name": "MiniMax M3",
+          "openRouterReasoning": {
+            "effort": "high"
+          },
+          "provider": "openrouter",
+          "systemPrompt": "You are an expert problem solver. Think through problems carefully:\n1. Identify what is being asked\n2. Consider the key facts and evidence\n3. Reason step by step through the problem\n4. Check your reasoning for errors or gaps\n5. State your final answer clearly\n\nBe precise and thorough. If you are uncertain, explain why.",
+          "temperature": 0.2,
+          "timeoutSeconds": 180,
+          "userPrompt": "{{user_prompt}}",
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000
+          }
+        },
+        "label": "MiniMax M3",
+        "type": "agent"
+      },
+      "id": "agent-minimax",
+      "position": {
+        "x": 120,
+        "y": 370
+      },
+      "type": "agent"
+    },
+    {
+      "id": "aggregation-vote",
+      "type": "aggregation",
+      "position": {
+        "x": 806,
+        "y": 720
+      },
+      "data": {
+        "type": "aggregation",
+        "label": "Majority Vote Aggregation",
+        "config": {
+          "name": "Majority Vote Aggregation",
+          "description": "The response selected by majority vote across council members",
+          "aggregationMethod": "majority_vote",
+          "aggregationConfig": {
+            "extraction_strategy": "regex",
+            "tie_breaker_method": "synthesis",
+            "tie_breaker_model": "deepseek/deepseek-v4-pro",
+            "tie_breaker_temperature": 0,
+            "extraction_pattern": "(?im)(?:^|\\n|[^\\n]{0,60}\\b)(?:final answer|answer)\\s*(?:(?:is)?\\s*[:\\-]\\s*(?:\\(?([A-Z])\\)?\\s*(?:[.)]?\\s*$|\\s+(?:is|was|are|because|since|as|therefore|so)\\b)|\\(?([^\\n)]{1,80}?)\\)?\\s*(?:[.;]\\s*$|$|\\n|[.;]\\s+(?:because|since|as|this|the|it)\\b|,?\\s+(?:because|since|as|therefore|so)\\b))|is\\s*:?\\s*(?:\\(?([A-Z])\\)?\\s*(?:[.)]?\\s*$|\\s+(?:is|was|are|because|since|as|therefore|so)\\b)|([-+]?(?:\\d+(?:\\.\\d+)?|[A-Z]\\s*=\\s*[-+]?\\d+(?:\\.\\d+)?))\\s*(?:[.;]?\\s*$|,?\\s+(?:because|since|as|therefore|so)\\b)))",
+            "system_prompt": "You are a synthesis agent that has received responses from multiple AI advisors. Your job is to deliver the definitive answer — informed by all responses but relying on your own judgment.\n\nRules:\n1. Analyze each response for correctness, completeness, and reasoning quality.\n2. Construct your answer using the strongest reasoning and evidence across all responses.\n3. Where responses conflict, use your judgment to determine which reasoning is more sound — do not default to the majority or to any single response.\n4. If responses use a structured answer format (e.g. \"Final answer: X\"), preserve that format in your synthesis.\n5. End with a clear, definitive conclusion.",
+            "prompt": "Original Question: {{prompt}}\n\n{{responses}}\n\nPlease provide a synthesized response that captures the best insights from all models.",
+            "max_tokens": -1
+          },
+          "timeoutSeconds": 120,
+          "retryPolicy": {
+            "max_attempts": 1
+          },
+          "aggregationWorkflowId": "aggregation-majority-vote"
+        }
+      }
+    },
+    {
+      "data": {
+        "config": {
+          "name": "voted_response",
+          "description": "The response selected by majority vote across council members",
+          "outputFormat": "text"
+        },
+        "label": "Majority Vote Result",
+        "type": "result"
+      },
+      "id": "result-vote",
+      "position": {
+        "x": 836,
+        "y": 1090
+      },
+      "type": "result"
+    }
+  ],
+  "updated_at": "2026-02-14T00:00:00Z",
+  "version": "1.0.0"
+}

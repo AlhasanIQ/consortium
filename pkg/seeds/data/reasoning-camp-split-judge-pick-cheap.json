@@ -1,0 +1,382 @@
+{
+  "version": "1.0.0",
+  "id": "reasoning-camp-split-judge-pick-cheap",
+  "name": "Camp Split Judge Pick (Cheap)",
+  "description": "Multi-model reasoning workflow where agents are grouped by answer into camps, then a judge adjudicates between camps",
+  "created_at": "2026-02-14T00:00:00Z",
+  "updated_at": "2026-02-14T00:00:00Z",
+  "nodes": [
+    {
+      "id": "input-prompt",
+      "type": "input",
+      "position": {
+        "x": 856,
+        "y": 80
+      },
+      "data": {
+        "type": "input",
+        "label": "User Prompt",
+        "config": {
+          "name": "user_prompt",
+          "description": "The question to send to all council members",
+          "schema": {
+            "user_prompt": {
+              "type": "string",
+              "required": true
+            }
+          },
+          "maxTokens": -1
+        }
+      }
+    },
+    {
+      "id": "agent-deepseek-flash",
+      "type": "agent",
+      "position": {
+        "x": 1312,
+        "y": 370
+      },
+      "data": {
+        "type": "agent",
+        "label": "DeepSeek V4 Flash",
+        "config": {
+          "name": "DeepSeek V4 Flash",
+          "provider": "openrouter",
+          "model": "deepseek/deepseek-v4-flash",
+          "openRouterReasoning": {
+            "effort": "high"
+          },
+          "systemPrompt": "You are an expert problem solver. Think through problems carefully:\n1. Identify what is being asked\n2. Consider the key facts and evidence\n3. Reason step by step through the problem\n4. Check your reasoning for errors or gaps\n5. State your final answer clearly\n\nBe precise and thorough. If you are uncertain, explain why.",
+          "userPrompt": "{{user_prompt}}",
+          "temperature": 0,
+          "timeoutSeconds": 180,
+          "maxTokens": -1,
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000
+          }
+        }
+      }
+    },
+    {
+      "id": "agent-minimax",
+      "type": "agent",
+      "position": {
+        "x": 120,
+        "y": 370
+      },
+      "data": {
+        "type": "agent",
+        "label": "MiniMax M3",
+        "config": {
+          "name": "MiniMax M3",
+          "provider": "openrouter",
+          "model": "minimax/minimax-m3",
+          "openRouterReasoning": {
+            "effort": "high"
+          },
+          "systemPrompt": "You are an expert problem solver. Think through problems carefully:\n1. Identify what is being asked\n2. Consider the key facts and evidence\n3. Reason step by step through the problem\n4. Check your reasoning for errors or gaps\n5. State your final answer clearly\n\nBe precise and thorough. If you are uncertain, explain why.",
+          "userPrompt": "{{user_prompt}}",
+          "temperature": 0,
+          "timeoutSeconds": 180,
+          "maxTokens": -1,
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000,
+            "adaptive_reasoning": {
+              "trigger_error_codes": [
+                "OUTPUT_TRUNCATED_EMPTY",
+                "TIMEOUT"
+              ],
+              "activate_after_consecutive": 2,
+              "ladder": [
+                "high",
+                "medium",
+                "low"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "agent-mimo",
+      "type": "agent",
+      "position": {
+        "x": 716,
+        "y": 370
+      },
+      "data": {
+        "type": "agent",
+        "label": "MiMo V2.5",
+        "config": {
+          "name": "MiMo V2.5",
+          "provider": "openrouter",
+          "model": "xiaomi/mimo-v2.5",
+          "openRouterReasoning": {
+            "effort": "high"
+          },
+          "systemPrompt": "You are an expert problem solver. Think through problems carefully:\n1. Identify what is being asked\n2. Consider the key facts and evidence\n3. Reason step by step through the problem\n4. Check your reasoning for errors or gaps\n5. State your final answer clearly\n\nBe precise and thorough. If you are uncertain, explain why.",
+          "userPrompt": "{{user_prompt}}",
+          "temperature": 0,
+          "timeoutSeconds": 180,
+          "maxTokens": -1,
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000
+          }
+        }
+      }
+    },
+    {
+      "id": "aggregation-debate",
+      "type": "aggregation",
+      "position": {
+        "x": 806,
+        "y": 720
+      },
+      "data": {
+        "type": "aggregation",
+        "label": "Debate Aggregation",
+        "config": {
+          "name": "Debate Aggregation",
+          "description": "The winning response selected by camp adjudication",
+          "aggregationMethod": "debate_decide",
+          "aggregationConfig": {
+            "system_prompt": "You are an impartial judge adjudicating between camps of independent agents. Choose the camp with the strongest reasoning, not the largest camp by default.\n\nDecision process:\n1. Read each camp's answer and supporting arguments.\n2. Check for concrete factual errors, invalid assumptions, logical contradictions, unsupported leaps, or missing constraints.\n3. Prefer the camp whose reasoning is most correct, complete, and well supported.\n4. Use camp size only as weak tie-breaking evidence when reasoning quality is otherwise comparable.\n\nAfter your analysis, end with exactly one line:\nWINNER: [answer]\n\nWhere [answer] is the final answer represented by the camp with the strongest arguments.",
+            "temperature": 0,
+            "openRouterReasoning": {
+              "effort": "low"
+            },
+            "extraction_strategy": "regex",
+            "judge_model": "deepseek/deepseek-v4-pro",
+            "max_tokens": -1,
+            "repair_max_tokens": 256,
+            "prompt": "Original Question: {{prompt}}\\n\\nCamp summaries:\\n{{camps}}\\n\\nReturn WINNER: [answer].",
+            "extraction_pattern": "(?im)(?:^|\\n|[^\\n]{0,60}\\b)(?:final answer|answer)\\s*(?:(?:is)?\\s*[:\\-]\\s*(?:\\(?([A-Z])\\)?\\s*(?:[.)]?\\s*$|\\s+(?:is|was|are|because|since|as|therefore|so)\\b)|\\(?([^\\n)]{1,80}?)\\)?\\s*(?:[.;]\\s*$|$|\\n|[.;]\\s+(?:because|since|as|this|the|it)\\b|,?\\s+(?:because|since|as|therefore|so)\\b))|is\\s*:?\\s*(?:\\(?([A-Z])\\)?\\s*(?:[.)]?\\s*$|\\s+(?:is|was|are|because|since|as|therefore|so)\\b)|([-+]?(?:\\d+(?:\\.\\d+)?|[A-Z]\\s*=\\s*[-+]?\\d+(?:\\.\\d+)?))\\s*(?:[.;]?\\s*$|,?\\s+(?:because|since|as|therefore|so)\\b)))"
+          },
+          "timeoutSeconds": 180,
+          "retryPolicy": {
+            "max_attempts": 1
+          },
+          "aggregationWorkflowId": "aggregation-debate-decide"
+        }
+      }
+    },
+    {
+      "id": "result-debate",
+      "type": "result",
+      "position": {
+        "x": 836,
+        "y": 1090
+      },
+      "data": {
+        "type": "result",
+        "label": "Debate Result",
+        "config": {
+          "name": "debate_response",
+          "description": "The winning response selected by camp adjudication",
+          "outputFormat": "text"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge-input-prompt-agent-deepseek-flash",
+      "source": "input-prompt",
+      "target": "agent-deepseek-flash"
+    },
+    {
+      "id": "edge-input-prompt-agent-minimax",
+      "source": "input-prompt",
+      "target": "agent-minimax"
+    },
+    {
+      "id": "edge-input-prompt-agent-mimo",
+      "source": "input-prompt",
+      "target": "agent-mimo"
+    },
+    {
+      "id": "edge-agent-deepseek-flash-aggregation-debate",
+      "source": "agent-deepseek-flash",
+      "target": "aggregation-debate"
+    },
+    {
+      "id": "edge-agent-minimax-aggregation-debate",
+      "source": "agent-minimax",
+      "target": "aggregation-debate"
+    },
+    {
+      "id": "edge-agent-mimo-aggregation-debate",
+      "source": "agent-mimo",
+      "target": "aggregation-debate"
+    },
+    {
+      "id": "edge-aggregation-debate-result-debate",
+      "source": "aggregation-debate",
+      "target": "result-debate"
+    }
+  ],
+  "metadata": {
+    "tags": [
+      "camp-debate",
+      "expensive",
+      "experimental",
+      "multi-model",
+      "reasoning"
+    ]
+  },
+  "optimize": {
+    "params": [
+      {
+        "path": "nodes[agent-deepseek-flash].data.config.model",
+        "type": "model",
+        "candidates": [
+          "xiaomi/mimo-v2.5",
+          "deepseek/deepseek-v4-flash",
+          "minimax/minimax-m3"
+        ],
+        "group": "agent_models"
+      },
+      {
+        "path": "nodes[agent-deepseek-flash].data.config.systemPrompt",
+        "type": "prompt",
+        "group": "agent_prompts"
+      },
+      {
+        "path": "nodes[agent-deepseek-flash].data.config.temperature",
+        "type": "float",
+        "range": {
+          "min": 0,
+          "max": 1,
+          "step": 0.1
+        },
+        "group": "agent_temperatures"
+      },
+      {
+        "path": "nodes[agent-minimax].data.config.model",
+        "type": "model",
+        "candidates": [
+          "xiaomi/mimo-v2.5",
+          "deepseek/deepseek-v4-flash",
+          "minimax/minimax-m3"
+        ],
+        "group": "agent_models"
+      },
+      {
+        "path": "nodes[agent-minimax].data.config.systemPrompt",
+        "type": "prompt",
+        "group": "agent_prompts"
+      },
+      {
+        "path": "nodes[agent-minimax].data.config.temperature",
+        "type": "float",
+        "range": {
+          "min": 0,
+          "max": 1,
+          "step": 0.1
+        },
+        "group": "agent_temperatures"
+      },
+      {
+        "path": "nodes[agent-mimo].data.config.model",
+        "type": "model",
+        "candidates": [
+          "xiaomi/mimo-v2.5",
+          "deepseek/deepseek-v4-flash",
+          "minimax/minimax-m3"
+        ],
+        "group": "agent_models"
+      },
+      {
+        "path": "nodes[agent-mimo].data.config.systemPrompt",
+        "type": "prompt",
+        "group": "agent_prompts"
+      },
+      {
+        "path": "nodes[agent-mimo].data.config.temperature",
+        "type": "float",
+        "range": {
+          "min": 0,
+          "max": 1,
+          "step": 0.1
+        },
+        "group": "agent_temperatures"
+      },
+      {
+        "path": "nodes[aggregation-debate].data.config.aggregationConfig.judge_model",
+        "type": "model",
+        "candidates": [
+          "deepseek/deepseek-v4-pro",
+          "deepseek/deepseek-v4-flash",
+          "xiaomi/mimo-v2.5",
+          "minimax/minimax-m3"
+        ],
+        "group": "aggregation_models"
+      },
+      {
+        "path": "nodes[aggregation-debate].data.config.aggregationConfig.temperature",
+        "type": "float",
+        "range": {
+          "min": 0,
+          "max": 1,
+          "step": 0.1
+        },
+        "group": "aggregation_temperatures"
+      },
+      {
+        "path": "nodes[aggregation-debate].data.config.aggregationConfig.system_prompt",
+        "type": "prompt",
+        "group": "aggregation_prompts"
+      }
+    ],
+    "locked": [
+      "nodes[aggregation-debate].data.config.aggregationMethod"
+    ],
+    "objectives": [
+      {
+        "metric": "accuracy",
+        "direction": "maximize",
+        "weight": 3
+      },
+      {
+        "metric": "cost_per_item",
+        "direction": "minimize",
+        "weight": 1
+      }
+    ],
+    "constraints": [
+      {
+        "metric": "cost_per_item",
+        "op": "<=",
+        "value": 0.05
+      },
+      {
+        "metric": "parse_rate",
+        "op": ">=",
+        "value": 0.95
+      }
+    ],
+    "stop_policy": {
+      "max_generations": 20,
+      "budget_usd": 10,
+      "plateau_generations": 5,
+      "stability_top_k": 3
+    },
+    "promotion_policy": {
+      "min_accuracy_gain": 0.02,
+      "require_generalization_check": true,
+      "no_regression_on": [
+        "parse_rate",
+        "cost_per_item"
+      ]
+    }
+  }
+}

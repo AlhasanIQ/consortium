@@ -1,0 +1,580 @@
+{
+  "created_at": "2026-02-14T00:00:00Z",
+  "description": "Multi-round deliberation workflow — 3 models answer independently (R1), then each revises after seeing the other two responses (R2), majority vote selects final answer",
+  "edges": [
+    {
+      "id": "edge-input-prompt-r1-deepseek-flash",
+      "source": "input-prompt",
+      "target": "r1-deepseek-flash"
+    },
+    {
+      "id": "edge-input-prompt-r1-minimax",
+      "source": "input-prompt",
+      "target": "r1-minimax"
+    },
+    {
+      "id": "edge-input-prompt-r1-mimo",
+      "source": "input-prompt",
+      "target": "r1-mimo"
+    },
+    {
+      "id": "edge-r1-deepseek-flash-r2-deepseek-flash",
+      "source": "r1-deepseek-flash",
+      "target": "r2-deepseek-flash"
+    },
+    {
+      "id": "edge-r1-minimax-r2-deepseek-flash",
+      "source": "r1-minimax",
+      "target": "r2-deepseek-flash"
+    },
+    {
+      "id": "edge-r1-mimo-r2-deepseek-flash",
+      "source": "r1-mimo",
+      "target": "r2-deepseek-flash"
+    },
+    {
+      "id": "edge-r1-deepseek-flash-r2-minimax",
+      "source": "r1-deepseek-flash",
+      "target": "r2-minimax"
+    },
+    {
+      "id": "edge-r1-minimax-r2-minimax",
+      "source": "r1-minimax",
+      "target": "r2-minimax"
+    },
+    {
+      "id": "edge-r1-mimo-r2-minimax",
+      "source": "r1-mimo",
+      "target": "r2-minimax"
+    },
+    {
+      "id": "edge-r1-deepseek-flash-r2-mimo",
+      "source": "r1-deepseek-flash",
+      "target": "r2-mimo"
+    },
+    {
+      "id": "edge-r1-minimax-r2-mimo",
+      "source": "r1-minimax",
+      "target": "r2-mimo"
+    },
+    {
+      "id": "edge-r1-mimo-r2-mimo",
+      "source": "r1-mimo",
+      "target": "r2-mimo"
+    },
+    {
+      "id": "edge-r2-deepseek-flash-aggregation-vote",
+      "source": "r2-deepseek-flash",
+      "target": "aggregation-vote"
+    },
+    {
+      "id": "edge-r2-minimax-aggregation-vote",
+      "source": "r2-minimax",
+      "target": "aggregation-vote"
+    },
+    {
+      "id": "edge-r2-mimo-aggregation-vote",
+      "source": "r2-mimo",
+      "target": "aggregation-vote"
+    },
+    {
+      "id": "edge-aggregation-vote-result-vote",
+      "source": "aggregation-vote",
+      "target": "result-vote"
+    }
+  ],
+  "id": "reasoning-multi-round-majority-pick-cheap",
+  "metadata": {
+    "tags": [
+      "deliberation",
+      "expensive",
+      "experimental",
+      "majority-vote",
+      "multi-model",
+      "multi-round",
+      "reasoning"
+    ]
+  },
+  "name": "Multi-Round Majority Pick (Cheap)",
+  "nodes": [
+    {
+      "data": {
+        "config": {
+          "description": "The question for adversarial debate",
+          "maxTokens": -1,
+          "name": "user_prompt",
+          "schema": {
+            "user_prompt": {
+              "required": true,
+              "type": "string"
+            }
+          }
+        },
+        "label": "User Prompt",
+        "type": "input"
+      },
+      "id": "input-prompt",
+      "position": {
+        "x": 1154,
+        "y": 80
+      },
+      "type": "input"
+    },
+    {
+      "data": {
+        "config": {
+          "maxTokens": -1,
+          "model": "deepseek/deepseek-v4-flash",
+          "name": "DeepSeek V4 Flash",
+          "openRouterReasoning": {
+            "effort": "high"
+          },
+          "provider": "openrouter",
+          "systemPrompt": "You are an expert problem solver. Think through problems carefully:\n1. Identify what is being asked\n2. Consider the key facts and evidence\n3. Reason step by step through the problem\n4. Check your reasoning for errors or gaps\n5. State your final answer clearly\n\nBe precise and thorough. If you are uncertain, explain why.",
+          "temperature": 0,
+          "timeoutSeconds": 180,
+          "userPrompt": "{{user_prompt}}",
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000
+          }
+        },
+        "label": "DeepSeek V4 Flash",
+        "type": "agent"
+      },
+      "id": "r1-deepseek-flash",
+      "position": {
+        "x": 1908,
+        "y": 370
+      },
+      "type": "agent"
+    },
+    {
+      "data": {
+        "config": {
+          "maxTokens": -1,
+          "model": "minimax/minimax-m3",
+          "name": "MiniMax M3",
+          "openRouterReasoning": {
+            "effort": "high"
+          },
+          "provider": "openrouter",
+          "systemPrompt": "You are an expert problem solver. Think through problems carefully:\n1. Identify what is being asked\n2. Consider the key facts and evidence\n3. Reason step by step through the problem\n4. Check your reasoning for errors or gaps\n5. State your final answer clearly\n\nBe precise and thorough. If you are uncertain, explain why.",
+          "temperature": 0,
+          "timeoutSeconds": 180,
+          "userPrompt": "{{user_prompt}}",
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000,
+            "adaptive_reasoning": {
+              "trigger_error_codes": [
+                "OUTPUT_TRUNCATED_EMPTY",
+                "TIMEOUT"
+              ],
+              "activate_after_consecutive": 2,
+              "ladder": [
+                "high",
+                "medium",
+                "low"
+              ]
+            }
+          }
+        },
+        "label": "MiniMax M3",
+        "type": "agent"
+      },
+      "id": "r1-minimax",
+      "position": {
+        "x": 120,
+        "y": 370
+      },
+      "type": "agent"
+    },
+    {
+      "data": {
+        "config": {
+          "maxTokens": -1,
+          "model": "xiaomi/mimo-v2.5",
+          "name": "MiMo V2.5",
+          "openRouterReasoning": {
+            "effort": "high"
+          },
+          "provider": "openrouter",
+          "systemPrompt": "You are an expert problem solver. Think through problems carefully:\n1. Identify what is being asked\n2. Consider the key facts and evidence\n3. Reason step by step through the problem\n4. Check your reasoning for errors or gaps\n5. State your final answer clearly\n\nBe precise and thorough. If you are uncertain, explain why.",
+          "temperature": 0,
+          "timeoutSeconds": 180,
+          "userPrompt": "{{user_prompt}}",
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000
+          }
+        },
+        "label": "MiMo V2.5",
+        "type": "agent"
+      },
+      "id": "r1-mimo",
+      "position": {
+        "x": 1014,
+        "y": 370
+      },
+      "type": "agent"
+    },
+    {
+      "data": {
+        "config": {
+          "maxTokens": -1,
+          "model": "deepseek/deepseek-v4-flash",
+          "name": "DeepSeek V4 Flash",
+          "openRouterReasoning": {
+            "effort": "high"
+          },
+          "provider": "openrouter",
+          "systemPrompt": "You previously answered a question. Now review two other expert responses below. You may revise your answer if the other responses reveal errors in your reasoning, or strengthen your original position if you believe it was correct.\n\nState your final answer clearly.",
+          "temperature": 0,
+          "timeoutSeconds": 180,
+          "userPrompt": "Original question:\n{{user_prompt}}\n\nYour previous answer:\n{{r1-deepseek-flash}}\n\n--- Expert Response A ---\n{{r1-mimo}}\n\n--- Expert Response B ---\n{{r1-minimax}}\n\nAfter reviewing these responses, provide your revised or confirmed final answer.",
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000
+          }
+        },
+        "label": "DeepSeek V4 Flash",
+        "type": "agent"
+      },
+      "id": "r2-deepseek-flash",
+      "position": {
+        "x": 1610,
+        "y": 720
+      },
+      "type": "agent"
+    },
+    {
+      "data": {
+        "config": {
+          "maxTokens": -1,
+          "model": "minimax/minimax-m3",
+          "name": "MiniMax M3",
+          "openRouterReasoning": {
+            "effort": "high"
+          },
+          "provider": "openrouter",
+          "systemPrompt": "You previously answered a question. Now review two other expert responses below. You may revise your answer if the other responses reveal errors in your reasoning, or strengthen your original position if you believe it was correct.\n\nState your final answer clearly.",
+          "temperature": 0,
+          "timeoutSeconds": 180,
+          "userPrompt": "Original question:\n{{user_prompt}}\n\nYour previous answer:\n{{r1-minimax}}\n\n--- Expert Response A ---\n{{r1-mimo}}\n\n--- Expert Response B ---\n{{r1-deepseek-flash}}\n\nAfter reviewing these responses, provide your revised or confirmed final answer.",
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000,
+            "adaptive_reasoning": {
+              "trigger_error_codes": [
+                "OUTPUT_TRUNCATED_EMPTY",
+                "TIMEOUT"
+              ],
+              "activate_after_consecutive": 2,
+              "ladder": [
+                "high",
+                "medium",
+                "low"
+              ]
+            }
+          }
+        },
+        "label": "MiniMax M3",
+        "type": "agent"
+      },
+      "id": "r2-minimax",
+      "position": {
+        "x": 418,
+        "y": 720
+      },
+      "type": "agent"
+    },
+    {
+      "data": {
+        "config": {
+          "maxTokens": -1,
+          "model": "xiaomi/mimo-v2.5",
+          "name": "MiMo V2.5",
+          "openRouterReasoning": {
+            "effort": "high"
+          },
+          "provider": "openrouter",
+          "systemPrompt": "You previously answered a question. Now review two other expert responses below. You may revise your answer if the other responses reveal errors in your reasoning, or strengthen your original position if you believe it was correct.\n\nState your final answer clearly.",
+          "temperature": 0,
+          "timeoutSeconds": 180,
+          "userPrompt": "Original question:\n{{user_prompt}}\n\nYour previous answer:\n{{r1-mimo}}\n\n--- Expert Response A ---\n{{r1-minimax}}\n\n--- Expert Response B ---\n{{r1-deepseek-flash}}\n\nAfter reviewing these responses, provide your revised or confirmed final answer.",
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000
+          }
+        },
+        "label": "MiMo V2.5",
+        "type": "agent"
+      },
+      "id": "r2-mimo",
+      "position": {
+        "x": 1014,
+        "y": 720
+      },
+      "type": "agent"
+    },
+    {
+      "id": "aggregation-vote",
+      "type": "aggregation",
+      "position": {
+        "x": 1104,
+        "y": 1070
+      },
+      "data": {
+        "type": "aggregation",
+        "label": "Final Vote Aggregation",
+        "config": {
+          "name": "Final Vote Aggregation",
+          "description": "The final answer after adversarial debate and majority vote",
+          "aggregationMethod": "majority_vote",
+          "aggregationConfig": {
+            "extraction_strategy": "regex",
+            "tie_breaker_method": "synthesis",
+            "tie_breaker_model": "deepseek/deepseek-v4-pro",
+            "tie_breaker_temperature": 0,
+            "extraction_pattern": "(?im)(?:^|\\n|[^\\n]{0,60}\\b)(?:final answer|answer)\\s*(?:(?:is)?\\s*[:\\-]\\s*(?:\\(?([A-Z])\\)?\\s*(?:[.)]?\\s*$|\\s+(?:is|was|are|because|since|as|therefore|so)\\b)|\\(?([^\\n)]{1,80}?)\\)?\\s*(?:[.;]\\s*$|$|\\n|[.;]\\s+(?:because|since|as|this|the|it)\\b|,?\\s+(?:because|since|as|therefore|so)\\b))|is\\s*:?\\s*(?:\\(?([A-Z])\\)?\\s*(?:[.)]?\\s*$|\\s+(?:is|was|are|because|since|as|therefore|so)\\b)|([-+]?(?:\\d+(?:\\.\\d+)?|[A-Z]\\s*=\\s*[-+]?\\d+(?:\\.\\d+)?))\\s*(?:[.;]?\\s*$|,?\\s+(?:because|since|as|therefore|so)\\b)))",
+            "system_prompt": "You are a synthesis agent that has received responses from multiple AI advisors. Your job is to deliver the definitive answer — informed by all responses but relying on your own judgment.\n\nRules:\n1. Analyze each response for correctness, completeness, and reasoning quality.\n2. Construct your answer using the strongest reasoning and evidence across all responses.\n3. Where responses conflict, use your judgment to determine which reasoning is more sound — do not default to the majority or to any single response.\n4. If responses use a structured answer format (e.g. \"Final answer: X\"), preserve that format in your synthesis.\n5. End with a clear, definitive conclusion.",
+            "prompt": "Original Question: {{prompt}}\n\n{{responses}}\n\nPlease provide a synthesized response that captures the best insights from all models.",
+            "max_tokens": -1
+          },
+          "timeoutSeconds": 180,
+          "retryPolicy": {
+            "max_attempts": 1
+          },
+          "aggregationWorkflowId": "aggregation-majority-vote"
+        }
+      }
+    },
+    {
+      "data": {
+        "config": {
+          "name": "debated_response",
+          "description": "The final answer after adversarial debate and majority vote",
+          "outputFormat": "text"
+        },
+        "label": "Final Vote",
+        "type": "result"
+      },
+      "id": "result-vote",
+      "position": {
+        "x": 1134,
+        "y": 1440
+      },
+      "type": "result"
+    }
+  ],
+  "updated_at": "2026-02-14T00:00:00Z",
+  "version": "1.0.0",
+  "optimize": {
+    "params": [
+      {
+        "path": "nodes[r1-deepseek-flash].data.config.model",
+        "type": "model",
+        "candidates": [
+          "xiaomi/mimo-v2.5",
+          "deepseek/deepseek-v4-flash",
+          "minimax/minimax-m3"
+        ],
+        "group": "agent_models"
+      },
+      {
+        "path": "nodes[r1-deepseek-flash].data.config.systemPrompt",
+        "type": "prompt",
+        "group": "agent_prompts"
+      },
+      {
+        "path": "nodes[r1-deepseek-flash].data.config.temperature",
+        "type": "float",
+        "range": {
+          "min": 0,
+          "max": 1,
+          "step": 0.1
+        },
+        "group": "agent_temperatures"
+      },
+      {
+        "path": "nodes[r1-minimax].data.config.model",
+        "type": "model",
+        "candidates": [
+          "xiaomi/mimo-v2.5",
+          "deepseek/deepseek-v4-flash",
+          "minimax/minimax-m3"
+        ],
+        "group": "agent_models"
+      },
+      {
+        "path": "nodes[r1-minimax].data.config.systemPrompt",
+        "type": "prompt",
+        "group": "agent_prompts"
+      },
+      {
+        "path": "nodes[r1-minimax].data.config.temperature",
+        "type": "float",
+        "range": {
+          "min": 0,
+          "max": 1,
+          "step": 0.1
+        },
+        "group": "agent_temperatures"
+      },
+      {
+        "path": "nodes[r1-mimo].data.config.model",
+        "type": "model",
+        "candidates": [
+          "xiaomi/mimo-v2.5",
+          "deepseek/deepseek-v4-flash",
+          "minimax/minimax-m3"
+        ],
+        "group": "agent_models"
+      },
+      {
+        "path": "nodes[r1-mimo].data.config.systemPrompt",
+        "type": "prompt",
+        "group": "agent_prompts"
+      },
+      {
+        "path": "nodes[r1-mimo].data.config.temperature",
+        "type": "float",
+        "range": {
+          "min": 0,
+          "max": 1,
+          "step": 0.1
+        },
+        "group": "agent_temperatures"
+      },
+      {
+        "path": "nodes[r2-deepseek-flash].data.config.model",
+        "type": "model",
+        "candidates": [
+          "xiaomi/mimo-v2.5",
+          "deepseek/deepseek-v4-flash",
+          "minimax/minimax-m3"
+        ],
+        "group": "agent_models"
+      },
+      {
+        "path": "nodes[r2-deepseek-flash].data.config.systemPrompt",
+        "type": "prompt",
+        "group": "agent_prompts"
+      },
+      {
+        "path": "nodes[r2-deepseek-flash].data.config.temperature",
+        "type": "float",
+        "range": {
+          "min": 0,
+          "max": 1,
+          "step": 0.1
+        },
+        "group": "agent_temperatures"
+      },
+      {
+        "path": "nodes[r2-minimax].data.config.model",
+        "type": "model",
+        "candidates": [
+          "xiaomi/mimo-v2.5",
+          "deepseek/deepseek-v4-flash",
+          "minimax/minimax-m3"
+        ],
+        "group": "agent_models"
+      },
+      {
+        "path": "nodes[r2-minimax].data.config.systemPrompt",
+        "type": "prompt",
+        "group": "agent_prompts"
+      },
+      {
+        "path": "nodes[r2-minimax].data.config.temperature",
+        "type": "float",
+        "range": {
+          "min": 0,
+          "max": 1,
+          "step": 0.1
+        },
+        "group": "agent_temperatures"
+      },
+      {
+        "path": "nodes[r2-mimo].data.config.model",
+        "type": "model",
+        "candidates": [
+          "xiaomi/mimo-v2.5",
+          "deepseek/deepseek-v4-flash",
+          "minimax/minimax-m3"
+        ],
+        "group": "agent_models"
+      },
+      {
+        "path": "nodes[r2-mimo].data.config.systemPrompt",
+        "type": "prompt",
+        "group": "agent_prompts"
+      },
+      {
+        "path": "nodes[r2-mimo].data.config.temperature",
+        "type": "float",
+        "range": {
+          "min": 0,
+          "max": 1,
+          "step": 0.1
+        },
+        "group": "agent_temperatures"
+      }
+    ],
+    "locked": [
+      "nodes[aggregation-vote].data.config.aggregationMethod"
+    ],
+    "objectives": [
+      {
+        "metric": "accuracy",
+        "direction": "maximize",
+        "weight": 3
+      },
+      {
+        "metric": "cost_per_item",
+        "direction": "minimize",
+        "weight": 1
+      }
+    ],
+    "constraints": [
+      {
+        "metric": "cost_per_item",
+        "op": "<=",
+        "value": 0.05
+      },
+      {
+        "metric": "parse_rate",
+        "op": ">=",
+        "value": 0.95
+      }
+    ],
+    "stop_policy": {
+      "max_generations": 20,
+      "budget_usd": 10,
+      "plateau_generations": 5,
+      "stability_top_k": 3
+    },
+    "promotion_policy": {
+      "min_accuracy_gain": 0.02,
+      "require_generalization_check": true,
+      "no_regression_on": [
+        "parse_rate",
+        "cost_per_item"
+      ]
+    }
+  }
+}

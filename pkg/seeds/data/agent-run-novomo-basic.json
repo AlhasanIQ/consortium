@@ -1,0 +1,122 @@
+{
+  "created_at": "2026-05-28T00:00:00Z",
+  "description": "Delegates one workflow step to Novomo via an agent_run node and returns the agent's final output.",
+  "edges": [
+    {
+      "id": "edge-input-prompt-agent-run",
+      "source": "input-prompt",
+      "target": "agent-run-novomo"
+    },
+    {
+      "id": "edge-agent-run-novomo-aggregation-agent-output",
+      "source": "agent-run-novomo",
+      "target": "aggregation-agent-output"
+    },
+    {
+      "id": "edge-aggregation-agent-output-result-agent-output",
+      "source": "aggregation-agent-output",
+      "target": "result-agent-output"
+    }
+  ],
+  "id": "agent-run-novomo-basic",
+  "metadata": {
+    "tags": [
+      "agent-run",
+      "novomo"
+    ]
+  },
+  "name": "Novomo Agent Run Basic",
+  "nodes": [
+    {
+      "data": {
+        "config": {
+          "description": "Task to delegate to the Novomo runtime",
+          "name": "user_prompt",
+          "schema": {
+            "user_prompt": {
+              "required": true,
+              "type": "string"
+            }
+          }
+        },
+        "label": "User Prompt",
+        "type": "input"
+      },
+      "id": "input-prompt",
+      "position": {
+        "x": 260,
+        "y": 80
+      },
+      "type": "input"
+    },
+    {
+      "data": {
+        "config": {
+          "description": "External agent execution owned by Novomo",
+          "harness": "claude-code",
+          "name": "Novomo Agent",
+          "prompt": "{{user_prompt}}",
+          "sandbox": "docker",
+          "retryPolicy": {
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_attempts": 2,
+            "max_backoff_ms": 30000
+          },
+          "timeoutSeconds": 600
+        },
+        "label": "Novomo Agent",
+        "type": "agent_run"
+      },
+      "id": "agent-run-novomo",
+      "position": {
+        "x": 120,
+        "y": 370
+      },
+      "type": "agent_run"
+    },
+    {
+      "id": "aggregation-agent-output",
+      "type": "aggregation",
+      "position": {
+        "x": 210,
+        "y": 720
+      },
+      "data": {
+        "type": "aggregation",
+        "label": "Agent Output Aggregation",
+        "config": {
+          "name": "Agent Output Aggregation",
+          "description": "",
+          "aggregationMethod": "collect",
+          "aggregationConfig": {},
+          "retryPolicy": {
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_attempts": 1,
+            "max_backoff_ms": 30000
+          }
+        }
+      }
+    },
+    {
+      "data": {
+        "config": {
+          "name": "agent_output",
+          "description": "",
+          "outputFormat": "text"
+        },
+        "label": "Agent Output",
+        "type": "result"
+      },
+      "id": "result-agent-output",
+      "position": {
+        "x": 240,
+        "y": 1090
+      },
+      "type": "result"
+    }
+  ],
+  "updated_at": "2026-05-28T00:00:00Z",
+  "version": "1.0.0"
+}

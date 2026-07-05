@@ -1,0 +1,244 @@
+{
+  "created_at": "2024-01-01T00:00:00Z",
+  "description": "Multi-model reasoning workflow with rubric-based scoring — responses are evaluated against quality criteria",
+  "edges": [
+    {
+      "id": "edge-input-prompt-agent-mimo-pro",
+      "source": "input-prompt",
+      "target": "agent-mimo-pro"
+    },
+    {
+      "id": "edge-input-prompt-agent-deepseek-pro",
+      "source": "input-prompt",
+      "target": "agent-deepseek-pro"
+    },
+    {
+      "id": "edge-input-prompt-agent-minimax",
+      "source": "input-prompt",
+      "target": "agent-minimax"
+    },
+    {
+      "id": "edge-agent-mimo-pro-aggregation-scoring",
+      "source": "agent-mimo-pro",
+      "target": "aggregation-scoring"
+    },
+    {
+      "id": "edge-agent-deepseek-pro-aggregation-scoring",
+      "source": "agent-deepseek-pro",
+      "target": "aggregation-scoring"
+    },
+    {
+      "id": "edge-agent-minimax-aggregation-scoring",
+      "source": "agent-minimax",
+      "target": "aggregation-scoring"
+    },
+    {
+      "id": "edge-aggregation-scoring-result-scoring",
+      "source": "aggregation-scoring",
+      "target": "result-scoring"
+    }
+  ],
+  "id": "reasoning-judge-score-pick",
+  "metadata": {
+    "tags": [
+      "multi-model",
+      "reasoning",
+      "scoring"
+    ]
+  },
+  "name": "Judge Score Pick",
+  "nodes": [
+    {
+      "data": {
+        "config": {
+          "description": "The question to send to all models for evaluation",
+          "maxTokens": -1,
+          "name": "user_prompt",
+          "schema": {
+            "user_prompt": {
+              "required": true,
+              "type": "string"
+            }
+          }
+        },
+        "label": "User Prompt",
+        "type": "input"
+      },
+      "id": "input-prompt",
+      "position": {
+        "x": 856,
+        "y": 80
+      },
+      "type": "input"
+    },
+    {
+      "data": {
+        "config": {
+          "maxTokens": -1,
+          "model": "xiaomi/mimo-v2.5-pro",
+          "name": "MiMo V2.5 Pro",
+          "openRouterReasoning": {
+            "effort": "high"
+          },
+          "provider": "openrouter",
+          "systemPrompt": "You are an expert problem solver. Think through problems carefully:\n1. Identify what is being asked\n2. Consider the key facts and evidence\n3. Reason step by step through the problem\n4. Check your reasoning for errors or gaps\n5. State your final answer clearly\n\nBe precise and thorough. If you are uncertain, explain why.",
+          "temperature": 0.2,
+          "timeoutSeconds": 180,
+          "userPrompt": "{{user_prompt}}",
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000
+          }
+        },
+        "label": "MiMo V2.5 Pro",
+        "type": "agent"
+      },
+      "id": "agent-mimo-pro",
+      "position": {
+        "x": 716,
+        "y": 370
+      },
+      "type": "agent"
+    },
+    {
+      "data": {
+        "config": {
+          "maxTokens": -1,
+          "model": "deepseek/deepseek-v4-pro",
+          "name": "DeepSeek V4 Pro",
+          "openRouterReasoning": {
+            "effort": "high"
+          },
+          "provider": "openrouter",
+          "systemPrompt": "You are an expert problem solver. Think through problems carefully:\n1. Identify what is being asked\n2. Consider the key facts and evidence\n3. Reason step by step through the problem\n4. Check your reasoning for errors or gaps\n5. State your final answer clearly\n\nBe precise and thorough. If you are uncertain, explain why.",
+          "temperature": 0.2,
+          "timeoutSeconds": 180,
+          "userPrompt": "{{user_prompt}}",
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000
+          }
+        },
+        "label": "DeepSeek V4 Pro",
+        "type": "agent"
+      },
+      "id": "agent-deepseek-pro",
+      "position": {
+        "x": 1312,
+        "y": 370
+      },
+      "type": "agent"
+    },
+    {
+      "data": {
+        "config": {
+          "maxTokens": -1,
+          "model": "minimax/minimax-m3",
+          "name": "MiniMax M3",
+          "openRouterReasoning": {
+            "effort": "high"
+          },
+          "provider": "openrouter",
+          "systemPrompt": "You are an expert problem solver. Think through problems carefully:\n1. Identify what is being asked\n2. Consider the key facts and evidence\n3. Reason step by step through the problem\n4. Check your reasoning for errors or gaps\n5. State your final answer clearly\n\nBe precise and thorough. If you are uncertain, explain why.",
+          "temperature": 0.2,
+          "timeoutSeconds": 180,
+          "userPrompt": "{{user_prompt}}",
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000
+          }
+        },
+        "label": "MiniMax M3",
+        "type": "agent"
+      },
+      "id": "agent-minimax",
+      "position": {
+        "x": 120,
+        "y": 370
+      },
+      "type": "agent"
+    },
+    {
+      "id": "aggregation-scoring",
+      "type": "aggregation",
+      "position": {
+        "x": 806,
+        "y": 720
+      },
+      "data": {
+        "type": "aggregation",
+        "label": "Scored Aggregation",
+        "config": {
+          "name": "Scored Aggregation",
+          "description": "The highest-scoring response based on rubric evaluation",
+          "aggregationMethod": "scoring",
+          "aggregationConfig": {
+            "max_tokens": -1,
+            "extraction_strategy": "regex",
+            "extraction_pattern": "(?im)(?:^|\\n|[^\\n]{0,60}\\b)(?:final answer|answer)\\s*(?:(?:is)?\\s*[:\\-]\\s*(?:\\(?([A-Z])\\)?\\s*(?:[.)]?\\s*$|\\s+(?:is|was|are|because|since|as|therefore|so)\\b)|\\(?([^\\n)]{1,80}?)\\)?\\s*(?:[.;]\\s*$|$|\\n|[.;]\\s+(?:because|since|as|this|the|it)\\b|,?\\s+(?:because|since|as|therefore|so)\\b))|is\\s*:?\\s*(?:\\(?([A-Z])\\)?\\s*(?:[.)]?\\s*$|\\s+(?:is|was|are|because|since|as|therefore|so)\\b)|([-+]?(?:\\d+(?:\\.\\d+)?|[A-Z]\\s*=\\s*[-+]?\\d+(?:\\.\\d+)?))\\s*(?:[.;]?\\s*$|,?\\s+(?:because|since|as|therefore|so)\\b)))",
+            "openRouterReasoning": {
+              "effort": "low"
+            },
+            "rubric": [
+              {
+                "name": "Logical Soundness",
+                "weight": 0.4,
+                "description": "Is the reasoning internally consistent, free of logical fallacies, and does the conclusion follow from the evidence presented?"
+              },
+              {
+                "name": "Evidence Analysis",
+                "weight": 0.3,
+                "description": "Are relevant facts, data, assumptions, and constraints properly identified and analyzed? Are important alternatives or edge cases addressed when they matter?"
+              },
+              {
+                "name": "Completeness",
+                "weight": 0.2,
+                "description": "Does the response address all aspects of the question? Are edge cases, caveats, or alternative interpretations considered?"
+              },
+              {
+                "name": "Clarity",
+                "weight": 0.1,
+                "description": "Is the response well-structured and easy to follow?"
+              }
+            ],
+            "rubric_mode": "dynamic",
+            "scoring_model": "deepseek/deepseek-v4-pro",
+            "system_prompt": "You are an expert evaluator scoring AI responses. For each criterion, provide a score (1-10) and brief justification.\n\nEnd your response with a JSON object containing the scores. Use the exact criterion keys shown in the rubric:\n{\"scores\": {\"criterion_key\": score_number, ...}}",
+            "temperature": 0.3,
+            "prompt": "Original Question: {{prompt}}\\n\\nResponse to evaluate:\\n{{response}}\\n\\nScoring Rubric:\\n{{rubric}}\\n\\nScore this response on each criterion."
+          },
+          "timeoutSeconds": 120,
+          "retryPolicy": {
+            "max_attempts": 1
+          },
+          "aggregationWorkflowId": "aggregation-scoring"
+        }
+      }
+    },
+    {
+      "data": {
+        "config": {
+          "name": "scored_response",
+          "description": "The highest-scoring response based on rubric evaluation",
+          "outputFormat": "text"
+        },
+        "label": "Scored Result",
+        "type": "result"
+      },
+      "id": "result-scoring",
+      "position": {
+        "x": 836,
+        "y": 1090
+      },
+      "type": "result"
+    }
+  ],
+  "updated_at": "2024-01-01T00:00:00Z",
+  "version": "1.0.0"
+}

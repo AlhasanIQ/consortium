@@ -1,0 +1,192 @@
+{
+  "created_at": "2026-06-23T00:00:00Z",
+  "description": "Reusable L0 aggregation workflow template for rubric scoring and winner selection",
+  "edges": [
+    {
+      "id": "edge-input-format",
+      "source": "input-contract",
+      "target": "op-format-candidates"
+    },
+    {
+      "id": "edge-format-scorer",
+      "source": "op-format-candidates",
+      "target": "agent-scorer"
+    },
+    {
+      "id": "edge-scorer-reduce",
+      "source": "agent-scorer",
+      "target": "op-reduce-scores"
+    },
+    {
+      "id": "edge-reduce-select",
+      "source": "op-reduce-scores",
+      "target": "op-select-winner"
+    },
+    {
+      "id": "edge-select-result",
+      "source": "op-select-winner",
+      "target": "result-aggregation"
+    }
+  ],
+  "id": "aggregation-scoring",
+  "metadata": {
+    "tags": [
+      "aggregation",
+      "scoring"
+    ],
+    "input_contract": {
+      "aggregation_config": "scoring_model, rubric_mode, rubric content, normalization, and prompt settings",
+      "candidate_ids": "ordered IDs for upstream candidate nodes",
+      "candidate_models": "model IDs keyed by candidate ID",
+      "candidates": "ordered candidate outputs",
+      "user_prompt": "original user prompt"
+    }
+  },
+  "name": "Aggregation Scoring",
+  "nodes": [
+    {
+      "data": {
+        "config": {
+          "description": "Parent-supplied aggregation inputs",
+          "name": "aggregation_inputs",
+          "schema": {
+            "aggregation_config": {
+              "required": false,
+              "type": "object"
+            },
+            "candidate_ids": {
+              "required": false,
+              "type": "array"
+            },
+            "candidate_models": {
+              "required": false,
+              "type": "object"
+            },
+            "candidates": {
+              "required": true,
+              "type": "array"
+            },
+            "user_prompt": {
+              "required": true,
+              "type": "string"
+            }
+          }
+        },
+        "label": "Aggregation Inputs",
+        "type": "input"
+      },
+      "id": "input-contract",
+      "position": {
+        "x": 260,
+        "y": 80
+      },
+      "type": "input"
+    },
+    {
+      "data": {
+        "config": {
+          "description": "Format candidates for scoring",
+          "name": "Format Candidates",
+          "operationConfig": {
+            "candidates": "{{candidates}}"
+          },
+          "operationType": "format_candidates"
+        },
+        "label": "Format Candidates",
+        "type": "operation"
+      },
+      "id": "op-format-candidates",
+      "position": {
+        "x": 120,
+        "y": 370
+      },
+      "type": "operation"
+    },
+    {
+      "data": {
+        "config": {
+          "maxTokens": -1,
+          "model": "deepseek/deepseek-v4-pro",
+          "name": "Scorer",
+          "systemPrompt": "You score one candidate response against the supplied rubric. Return JSON with candidate and score.",
+          "temperature": 0.2,
+          "timeoutSeconds": 180,
+          "userPrompt": "Original prompt:\n{{user_prompt}}\n\nCandidate set:\n{{op-format-candidates}}\n\nScore the assigned candidate using the configured rubric. Return JSON scores.",
+          "retryPolicy": {
+            "max_attempts": 1
+          }
+        },
+        "label": "Scorer",
+        "type": "agent"
+      },
+      "id": "agent-scorer",
+      "position": {
+        "x": 120,
+        "y": 720
+      },
+      "type": "agent"
+    },
+    {
+      "data": {
+        "config": {
+          "description": "Reduce per-candidate scores",
+          "name": "Reduce Scores",
+          "operationConfig": {
+            "scores": "{{scores}}"
+          },
+          "operationType": "reduce_scores"
+        },
+        "label": "Reduce Scores",
+        "type": "operation"
+      },
+      "id": "op-reduce-scores",
+      "position": {
+        "x": 120,
+        "y": 1070
+      },
+      "type": "operation"
+    },
+    {
+      "data": {
+        "config": {
+          "description": "Select the highest-scoring candidate",
+          "name": "Select Winner",
+          "operationConfig": {
+            "outputs": "{{candidate_outputs}}",
+            "scores": "{{op-reduce-scores}}"
+          },
+          "operationType": "select_winner"
+        },
+        "label": "Select Winner",
+        "type": "operation"
+      },
+      "id": "op-select-winner",
+      "position": {
+        "x": 120,
+        "y": 1420
+      },
+      "type": "operation"
+    },
+    {
+      "data": {
+        "config": {
+          "aggregationMethod": "collect",
+          "name": "aggregation_result",
+          "outputFormat": "text",
+          "retryPolicy": {
+            "max_attempts": 1
+          }
+        },
+        "label": "Aggregation Result",
+        "type": "result"
+      },
+      "id": "result-aggregation",
+      "position": {
+        "x": 240,
+        "y": 1770
+      },
+      "type": "result"
+    }
+  ],
+  "updated_at": "2026-06-23T00:00:00Z"
+}

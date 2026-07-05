@@ -1,0 +1,41 @@
+version: "2"
+
+run:
+  timeout: 5m
+  go: '1.25'
+  issues-exit-code: 0
+
+linters:
+  default: standard
+  # standard includes: errcheck, govet, ineffassign, staticcheck, unused
+  # staticcheck now includes gosimple checks
+  settings:
+    errcheck:
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+    gocyclo:
+      min-complexity: 20
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+output:
+  formats:
+    text:
+      path: stdout
+      print-linter-name: true
+      print-issued-lines: true
+      colors: true

@@ -1,0 +1,92 @@
+{
+  "id": "",
+  "name": "builder-aggregation-synthesis",
+  "description": "",
+  "nodes": [
+    {
+      "id": "agent-a",
+      "type": "prompt",
+      "prompt": "You are an expert. Solve: {{user_prompt}}",
+      "system_prompt": "You are an expert. Solve: {{user_prompt}}",
+      "model": "openai/gpt-4o-mini",
+      "temperature": 0.2,
+      "max_tokens": -1,
+      "timeout_seconds": 180,
+      "retry_policy": {
+        "backoff_ms": 1000,
+        "backoff_multiply": 2,
+        "max_backoff_ms": 30000,
+        "max_attempts": 5
+      },
+      "metadata": {
+        "label": "agent-a Agent(agent-a)"
+      }
+    },
+    {
+      "id": "agent-b",
+      "type": "prompt",
+      "prompt": "You are an expert. Solve: {{user_prompt}}",
+      "system_prompt": "You are an expert. Solve: {{user_prompt}}",
+      "model": "anthropic/claude-sonnet-4.5",
+      "temperature": 0.2,
+      "max_tokens": -1,
+      "timeout_seconds": 180,
+      "retry_policy": {
+        "backoff_ms": 1000,
+        "backoff_multiply": 2,
+        "max_backoff_ms": 30000,
+        "max_attempts": 5
+      },
+      "metadata": {
+        "label": "agent-b Agent(agent-b)"
+      }
+    },
+    {
+      "id": "agg-synthesis",
+      "type": "result",
+      "output_name": "final_answer",
+      "output_format": "text",
+      "aggregation_method": "synthesis",
+      "aggregation_config": {
+        "model": "openai/gpt-5-mini",
+        "system_prompt": "You synthesize the strongest answer from all responses.",
+        "prompt": "Question: {{prompt}}\n\nResponses:\n{{responses}}\n\nProduce one answer.",
+        "temperature": 0,
+        "max_tokens": -1
+      },
+      "retry_policy": {
+        "backoff_ms": 1000,
+        "backoff_multiply": 2,
+        "max_backoff_ms": 30000,
+        "max_attempts": 1
+      },
+      "metadata": {
+        "input_ids": [
+          "agent-a",
+          "agent-b"
+        ],
+        "label": "agg-synthesis Aggregation(synthesis aggregation)",
+        "output_name": "final_answer",
+        "output_format": "text",
+        "aggregation_anchor_id": "agg-synthesis",
+        "aggregation_method": "synthesis",
+        "presentation_result_id": "result-synthesis"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e3",
+      "source": "agent-a",
+      "target": "agg-synthesis"
+    },
+    {
+      "id": "e4",
+      "source": "agent-b",
+      "target": "agg-synthesis"
+    }
+  ],
+  "context": {
+    "user_prompt": "What is 2 + 2? Reply with just the number."
+  }
+}

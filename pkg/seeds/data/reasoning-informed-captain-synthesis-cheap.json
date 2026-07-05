@@ -1,0 +1,377 @@
+{
+  "created_at": "2024-01-01T00:00:00Z",
+  "description": "Multi-model reasoning workflow — queries multiple LLMs in parallel and synthesizes their responses",
+  "edges": [
+    {
+      "id": "edge-input-prompt-agent-deepseek-flash",
+      "source": "input-prompt",
+      "target": "agent-deepseek-flash"
+    },
+    {
+      "id": "edge-input-prompt-agent-minimax",
+      "source": "input-prompt",
+      "target": "agent-minimax"
+    },
+    {
+      "id": "edge-input-prompt-agent-mimo",
+      "source": "input-prompt",
+      "target": "agent-mimo"
+    },
+    {
+      "id": "edge-agent-deepseek-flash-aggregation-synthesis",
+      "source": "agent-deepseek-flash",
+      "target": "aggregation-synthesis"
+    },
+    {
+      "id": "edge-agent-minimax-aggregation-synthesis",
+      "source": "agent-minimax",
+      "target": "aggregation-synthesis"
+    },
+    {
+      "id": "edge-agent-mimo-aggregation-synthesis",
+      "source": "agent-mimo",
+      "target": "aggregation-synthesis"
+    },
+    {
+      "id": "edge-aggregation-synthesis-result-synthesis",
+      "source": "aggregation-synthesis",
+      "target": "result-synthesis"
+    }
+  ],
+  "id": "reasoning-informed-captain-synthesis-cheap",
+  "metadata": {
+    "tags": [
+      "multi-model",
+      "reasoning",
+      "synthesis"
+    ]
+  },
+  "name": "Informed Captain Synthesis (Cheap)",
+  "nodes": [
+    {
+      "data": {
+        "config": {
+          "description": "The question or prompt to send to all council members",
+          "maxTokens": -1,
+          "name": "user_prompt",
+          "schema": {
+            "user_prompt": {
+              "required": true,
+              "type": "string"
+            }
+          }
+        },
+        "label": "User Prompt",
+        "type": "input"
+      },
+      "id": "input-prompt",
+      "position": {
+        "x": 856,
+        "y": 80
+      },
+      "type": "input"
+    },
+    {
+      "data": {
+        "config": {
+          "maxTokens": -1,
+          "model": "deepseek/deepseek-v4-flash",
+          "name": "DeepSeek V4 Flash",
+          "openRouterReasoning": {
+            "effort": "high"
+          },
+          "provider": "openrouter",
+          "systemPrompt": "You are an expert problem solver. Think through problems carefully:\n1. Identify what is being asked\n2. Consider the key facts and evidence\n3. Reason step by step through the problem\n4. Check your reasoning for errors or gaps\n5. State your final answer clearly\n\nBe precise and thorough. If you are uncertain, explain why.",
+          "temperature": 0,
+          "timeoutSeconds": 180,
+          "userPrompt": "{{user_prompt}}",
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000
+          }
+        },
+        "label": "DeepSeek V4 Flash",
+        "type": "agent"
+      },
+      "id": "agent-deepseek-flash",
+      "position": {
+        "x": 1312,
+        "y": 370
+      },
+      "type": "agent"
+    },
+    {
+      "data": {
+        "config": {
+          "maxTokens": -1,
+          "model": "minimax/minimax-m3",
+          "name": "MiniMax M3",
+          "openRouterReasoning": {
+            "effort": "high"
+          },
+          "provider": "openrouter",
+          "systemPrompt": "You are an expert problem solver. Think through problems carefully:\n1. Identify what is being asked\n2. Consider the key facts and evidence\n3. Reason step by step through the problem\n4. Check your reasoning for errors or gaps\n5. State your final answer clearly\n\nBe precise and thorough. If you are uncertain, explain why.",
+          "temperature": 0,
+          "timeoutSeconds": 180,
+          "userPrompt": "{{user_prompt}}",
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000,
+            "adaptive_reasoning": {
+              "trigger_error_codes": [
+                "OUTPUT_TRUNCATED_EMPTY",
+                "TIMEOUT"
+              ],
+              "activate_after_consecutive": 2,
+              "ladder": [
+                "high",
+                "medium",
+                "low"
+              ]
+            }
+          }
+        },
+        "label": "MiniMax M3",
+        "type": "agent"
+      },
+      "id": "agent-minimax",
+      "position": {
+        "x": 120,
+        "y": 370
+      },
+      "type": "agent"
+    },
+    {
+      "data": {
+        "config": {
+          "maxTokens": -1,
+          "model": "xiaomi/mimo-v2.5",
+          "name": "MiMo V2.5",
+          "openRouterReasoning": {
+            "effort": "high"
+          },
+          "provider": "openrouter",
+          "systemPrompt": "You are an expert problem solver. Think through problems carefully:\n1. Identify what is being asked\n2. Consider the key facts and evidence\n3. Reason step by step through the problem\n4. Check your reasoning for errors or gaps\n5. State your final answer clearly\n\nBe precise and thorough. If you are uncertain, explain why.",
+          "temperature": 0,
+          "timeoutSeconds": 180,
+          "userPrompt": "{{user_prompt}}",
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000
+          }
+        },
+        "label": "MiMo V2.5",
+        "type": "agent"
+      },
+      "id": "agent-mimo",
+      "position": {
+        "x": 716,
+        "y": 370
+      },
+      "type": "agent"
+    },
+    {
+      "id": "aggregation-synthesis",
+      "type": "aggregation",
+      "position": {
+        "x": 806,
+        "y": 720
+      },
+      "data": {
+        "type": "aggregation",
+        "label": "Synthesized Aggregation",
+        "config": {
+          "name": "Synthesized Aggregation",
+          "description": "The final synthesized response from all council members",
+          "aggregationMethod": "synthesis",
+          "aggregationConfig": {
+            "max_tokens": -1,
+            "model": "deepseek/deepseek-v4-pro",
+            "openRouterReasoning": {
+              "effort": "low"
+            },
+            "system_prompt": "You are a synthesis agent that has received responses from multiple AI advisors. Your job is to deliver the definitive answer — informed by all responses but relying on your own judgment.\n\nRules:\n1. Analyze each response for correctness, completeness, and reasoning quality.\n2. Construct your answer using the strongest reasoning and evidence across all responses.\n3. Where responses conflict, use your judgment to determine which reasoning is more sound — do not default to the majority or to any single response.\n4. If responses use a structured answer format (e.g. \"Final answer: X\"), preserve that format in your synthesis.\n5. End with a clear, definitive conclusion.",
+            "temperature": 0,
+            "prompt": "Original Question: {{prompt}}\\n\\nResponses:\\n{{responses}}\\n\\nProduce a single best answer."
+          },
+          "timeoutSeconds": 120,
+          "retryPolicy": {
+            "max_attempts": 1
+          },
+          "aggregationWorkflowId": "aggregation-synthesis"
+        }
+      }
+    },
+    {
+      "data": {
+        "config": {
+          "name": "synthesized_response",
+          "description": "The final synthesized response from all council members",
+          "outputFormat": "text"
+        },
+        "label": "Synthesized Result",
+        "type": "result"
+      },
+      "id": "result-synthesis",
+      "position": {
+        "x": 836,
+        "y": 1090
+      },
+      "type": "result"
+    }
+  ],
+  "updated_at": "2024-01-01T00:00:00Z",
+  "version": "1.0.0",
+  "optimize": {
+    "params": [
+      {
+        "path": "nodes[agent-deepseek-flash].data.config.model",
+        "type": "model",
+        "candidates": [
+          "xiaomi/mimo-v2.5",
+          "deepseek/deepseek-v4-flash",
+          "minimax/minimax-m3"
+        ],
+        "group": "agent_models"
+      },
+      {
+        "path": "nodes[agent-deepseek-flash].data.config.systemPrompt",
+        "type": "prompt",
+        "group": "agent_prompts"
+      },
+      {
+        "path": "nodes[agent-deepseek-flash].data.config.temperature",
+        "type": "float",
+        "range": {
+          "min": 0,
+          "max": 1,
+          "step": 0.1
+        },
+        "group": "agent_temperatures"
+      },
+      {
+        "path": "nodes[agent-minimax].data.config.model",
+        "type": "model",
+        "candidates": [
+          "xiaomi/mimo-v2.5",
+          "deepseek/deepseek-v4-flash",
+          "minimax/minimax-m3"
+        ],
+        "group": "agent_models"
+      },
+      {
+        "path": "nodes[agent-minimax].data.config.systemPrompt",
+        "type": "prompt",
+        "group": "agent_prompts"
+      },
+      {
+        "path": "nodes[agent-minimax].data.config.temperature",
+        "type": "float",
+        "range": {
+          "min": 0,
+          "max": 1,
+          "step": 0.1
+        },
+        "group": "agent_temperatures"
+      },
+      {
+        "path": "nodes[agent-mimo].data.config.model",
+        "type": "model",
+        "candidates": [
+          "xiaomi/mimo-v2.5",
+          "deepseek/deepseek-v4-flash",
+          "minimax/minimax-m3"
+        ],
+        "group": "agent_models"
+      },
+      {
+        "path": "nodes[agent-mimo].data.config.systemPrompt",
+        "type": "prompt",
+        "group": "agent_prompts"
+      },
+      {
+        "path": "nodes[agent-mimo].data.config.temperature",
+        "type": "float",
+        "range": {
+          "min": 0,
+          "max": 1,
+          "step": 0.1
+        },
+        "group": "agent_temperatures"
+      },
+      {
+        "path": "nodes[aggregation-synthesis].data.config.aggregationConfig.model",
+        "type": "model",
+        "candidates": [
+          "deepseek/deepseek-v4-pro",
+          "deepseek/deepseek-v4-flash",
+          "xiaomi/mimo-v2.5",
+          "minimax/minimax-m3"
+        ],
+        "group": "aggregation_models"
+      },
+      {
+        "path": "nodes[aggregation-synthesis].data.config.aggregationConfig.temperature",
+        "type": "float",
+        "range": {
+          "min": 0,
+          "max": 1,
+          "step": 0.1
+        },
+        "group": "aggregation_temperatures"
+      },
+      {
+        "path": "nodes[aggregation-synthesis].data.config.aggregationConfig.system_prompt",
+        "type": "prompt",
+        "group": "aggregation_prompts"
+      }
+    ],
+    "locked": [
+      "nodes[aggregation-synthesis].data.config.aggregationMethod"
+    ],
+    "objectives": [
+      {
+        "metric": "accuracy",
+        "direction": "maximize",
+        "weight": 3
+      },
+      {
+        "metric": "cost_per_item",
+        "direction": "minimize",
+        "weight": 1
+      }
+    ],
+    "constraints": [
+      {
+        "metric": "cost_per_item",
+        "op": "<=",
+        "value": 0.05
+      },
+      {
+        "metric": "parse_rate",
+        "op": ">=",
+        "value": 0.95
+      }
+    ],
+    "stop_policy": {
+      "max_generations": 20,
+      "budget_usd": 10,
+      "plateau_generations": 5,
+      "stability_top_k": 3
+    },
+    "promotion_policy": {
+      "min_accuracy_gain": 0.02,
+      "require_generalization_check": true,
+      "no_regression_on": [
+        "parse_rate",
+        "cost_per_item"
+      ]
+    }
+  }
+}

@@ -1,0 +1,56 @@
+# Git
+.git
+.gitignore
+
+# Dev container
+.devcontainer
+
+# IDE
+.vscode
+.idea
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Dependencies and caches
+node_modules
+.bun
+.cache
+
+# Build artifacts (local builds, not source)
+consortium
+admin-panel
+*.exe
+*.test
+*.out
+bench
+loadtest
+server
+bin
+frontend/dist
+pkg/static/dist
+coverage.out
+
+# Local data and config
+consortium.db*
+.env
+.env.local
+.tmp
+.venv
+logs
+
+# Local assistant/tooling state
+.claude
+.agents
+.superpowers
+docs/superpowers
+
+# Generated benchmark and model artifacts
+benchmarks/results
+benchmarks/loop/state.json
+benchmarks/loop/session_index.jsonl
+benchmarks/loop/sessions
+benchmarks/loop/archive
+benchmarks/loop/baselines
+benchmarks/models_repo/source_raw.json

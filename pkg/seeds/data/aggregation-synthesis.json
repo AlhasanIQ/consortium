@@ -1,0 +1,141 @@
+{
+  "created_at": "2026-06-23T00:00:00Z",
+  "description": "Reusable L0 aggregation workflow that formats candidates and synthesizes a unified answer",
+  "edges": [
+    {
+      "id": "edge-input-format",
+      "source": "input-contract",
+      "target": "op-format-candidates"
+    },
+    {
+      "id": "edge-format-synthesizer",
+      "source": "op-format-candidates",
+      "target": "agent-synthesizer"
+    },
+    {
+      "id": "edge-synthesizer-result",
+      "source": "agent-synthesizer",
+      "target": "result-aggregation"
+    }
+  ],
+  "id": "aggregation-synthesis",
+  "metadata": {
+    "tags": [
+      "aggregation",
+      "synthesis"
+    ],
+    "input_contract": {
+      "aggregation_config": "synthesis model and prompt settings",
+      "candidate_ids": "ordered IDs for upstream candidate nodes",
+      "candidate_models": "model IDs keyed by candidate ID",
+      "candidates": "ordered candidate outputs",
+      "user_prompt": "original user prompt"
+    }
+  },
+  "name": "Aggregation Synthesis",
+  "nodes": [
+    {
+      "data": {
+        "config": {
+          "description": "Parent-supplied aggregation inputs",
+          "name": "aggregation_inputs",
+          "schema": {
+            "aggregation_config": {
+              "required": false,
+              "type": "object"
+            },
+            "candidate_ids": {
+              "required": false,
+              "type": "array"
+            },
+            "candidate_models": {
+              "required": false,
+              "type": "object"
+            },
+            "candidates": {
+              "required": true,
+              "type": "array"
+            },
+            "user_prompt": {
+              "required": true,
+              "type": "string"
+            }
+          }
+        },
+        "label": "Aggregation Inputs",
+        "type": "input"
+      },
+      "id": "input-contract",
+      "position": {
+        "x": 260,
+        "y": 80
+      },
+      "type": "input"
+    },
+    {
+      "data": {
+        "config": {
+          "description": "Format candidates for blind synthesis",
+          "name": "Format Candidates",
+          "operationConfig": {
+            "candidates": "{{candidates}}"
+          },
+          "operationType": "format_candidates"
+        },
+        "label": "Format Candidates",
+        "type": "operation"
+      },
+      "id": "op-format-candidates",
+      "position": {
+        "x": 120,
+        "y": 370
+      },
+      "type": "operation"
+    },
+    {
+      "data": {
+        "config": {
+          "maxTokens": -1,
+          "model": "deepseek/deepseek-v4-pro",
+          "name": "Synthesizer",
+          "systemPrompt": "You are a synthesis agent. Combine the strongest parts of the candidate responses into one clear answer. Do not mention model names.",
+          "temperature": 0.3,
+          "timeoutSeconds": 180,
+          "userPrompt": "Original prompt:\n{{user_prompt}}\n\nCandidate responses:\n{{op-format-candidates}}\n\nWrite the best synthesized answer.",
+          "retryPolicy": {
+            "max_attempts": 1
+          }
+        },
+        "label": "Synthesizer",
+        "type": "agent"
+      },
+      "id": "agent-synthesizer",
+      "position": {
+        "x": 120,
+        "y": 720
+      },
+      "type": "agent"
+    },
+    {
+      "data": {
+        "config": {
+          "aggregationMethod": "collect",
+          "name": "aggregation_result",
+          "outputFormat": "text",
+          "retryPolicy": {
+            "max_attempts": 1
+          }
+        },
+        "label": "Aggregation Result",
+        "type": "result"
+      },
+      "id": "result-aggregation",
+      "position": {
+        "x": 240,
+        "y": 1070
+      },
+      "type": "result"
+    }
+  ],
+  "updated_at": "2026-06-23T00:00:00Z"
+}

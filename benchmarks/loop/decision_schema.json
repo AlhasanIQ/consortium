@@ -1,0 +1,34 @@
+{
+  "_doc": "Schema for benchmarks/loop/decision.json — the agent's machine-readable output contract.",
+  "_instructions": "Write this file as your LAST action. Missing file = crash → rollback.",
+
+  "verdict": "continue | stop_improved | stop_no_progress | rollback",
+  "run_id": "benchmark run ID from your main evaluation",
+  "accuracy": 0.84,
+  "parse_rate": 0.98,
+  "failed_items": 2,
+  "total_items": 50,
+  "cost_per_item": 0.0045,
+  "workflows_modified": ["reasoning-informed-captain-synthesis"],
+  "changes_summary": "One-line description of what you changed",
+  "reasoning": "2-4 sentences explaining your hypothesis and findings",
+  "sanity_passed": true,
+
+  "_optional_fields_below": true,
+  "avg_latency_ms": 5200,
+  "p95_latency_ms": 12000,
+  "targeted_replay_run_id": "run ID from replay-items",
+  "targeted_replay_item": "item ID used in replay-items",
+  "targeted_replay_pass": true,
+  "sanity_run_id": "run ID from sanity check",
+  "failure_analysis": "breakdown of failure categories",
+  "recommendation_for_full_run": false,
+  "ux_recommendations": "REQUIRED. Specific conctl tooling feedback: missing commands, missing filters/flags, too-many-step lookups, awkward output formats, or missing data views you encountered this iteration. If none, write 'No issues — conctl commands were sufficient for this iteration.'",
+
+  "_verdicts": {
+    "continue": "Changes show improvement or promise — loop continues",
+    "stop_improved": "Clear improvement achieved — halt successfully",
+    "stop_no_progress": "Exhausted ideas — no improvement found",
+    "rollback": "Changes didn't help — revert to baseline"
+  }
+}

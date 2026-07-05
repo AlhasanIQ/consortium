@@ -1,0 +1,57 @@
+{
+  "id": "",
+  "name": "builder-collect",
+  "description": "",
+  "nodes": [
+    {
+      "id": "agent-1",
+      "type": "prompt",
+      "prompt": "You are an expert. Solve: {{user_prompt}}",
+      "system_prompt": "You are an expert. Solve: {{user_prompt}}",
+      "model": "openai/gpt-4o-mini",
+      "temperature": 0.2,
+      "max_tokens": -1,
+      "timeout_seconds": 180,
+      "retry_policy": {
+        "backoff_ms": 1000,
+        "backoff_multiply": 2,
+        "max_backoff_ms": 30000,
+        "max_attempts": 5
+      },
+      "metadata": {
+        "label": "agent-1 Agent(agent-1)"
+      }
+    },
+    {
+      "id": "result-1",
+      "type": "result",
+      "output_name": "final_answer",
+      "output_format": "text",
+      "aggregation_method": "collect",
+      "retry_policy": {
+        "max_attempts": 3,
+        "backoff_ms": 1000,
+        "backoff_multiply": 2,
+        "max_backoff_ms": 30000
+      },
+      "metadata": {
+        "input_ids": [
+          "agent-1"
+        ],
+        "label": "result-1 Result(final_answer)",
+        "output_name": "final_answer",
+        "output_format": "text"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e2",
+      "source": "agent-1",
+      "target": "result-1"
+    }
+  ],
+  "context": {
+    "user_prompt": "What is 2 + 2? Reply with just the number."
+  }
+}

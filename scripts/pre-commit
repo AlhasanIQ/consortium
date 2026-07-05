@@ -1,0 +1,26 @@
+#!/bin/bash
+set -e
+
+STAGED_GO_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep '\.go$' || true)
+[ -z "$STAGED_GO_FILES" ] && exit 0
+
+# Find golangci-lint
+GOLANGCI_LINT=$(command -v golangci-lint 2>/dev/null || echo "$HOME/go/bin/golangci-lint")
+if [ ! -x "$GOLANGCI_LINT" ]; then
+    echo "golangci-lint not found. Install with: make install-tools"
+    exit 1
+fi
+
+# Check formatting
+echo "Checking formatting..."
+if ! $GOLANGCI_LINT fmt --diff ./... > /dev/null 2>&1; then
+    echo "Files need formatting. Run 'make fmt' to fix:"
+    $GOLANGCI_LINT fmt --diff ./...
+    exit 1
+fi
+
+# Run linter on entire project
+echo "Running linter..."
+$GOLANGCI_LINT run ./...
+
+echo "All checks passed!"

@@ -1,0 +1,88 @@
+{
+  "id": "",
+  "name": "builder-aggregation-collect",
+  "description": "",
+  "nodes": [
+    {
+      "id": "agent-a",
+      "type": "prompt",
+      "prompt": "You are an expert. Solve: {{user_prompt}}",
+      "system_prompt": "You are an expert. Solve: {{user_prompt}}",
+      "model": "openai/gpt-4o-mini",
+      "temperature": 0.2,
+      "max_tokens": -1,
+      "timeout_seconds": 180,
+      "retry_policy": {
+        "backoff_ms": 1000,
+        "backoff_multiply": 2,
+        "max_backoff_ms": 30000,
+        "max_attempts": 5
+      },
+      "metadata": {
+        "label": "agent-a Agent(agent-a)"
+      }
+    },
+    {
+      "id": "agent-b",
+      "type": "prompt",
+      "prompt": "You are an expert. Solve: {{user_prompt}}",
+      "system_prompt": "You are an expert. Solve: {{user_prompt}}",
+      "model": "anthropic/claude-sonnet-4.5",
+      "temperature": 0.2,
+      "max_tokens": -1,
+      "timeout_seconds": 180,
+      "retry_policy": {
+        "backoff_ms": 1000,
+        "backoff_multiply": 2,
+        "max_backoff_ms": 30000,
+        "max_attempts": 5
+      },
+      "metadata": {
+        "label": "agent-b Agent(agent-b)"
+      }
+    },
+    {
+      "id": "agg-collect",
+      "type": "result",
+      "output_name": "final_answer",
+      "output_format": "text",
+      "aggregation_method": "collect",
+      "aggregation_config": {
+        "separator": "\n---\n"
+      },
+      "retry_policy": {
+        "backoff_ms": 1000,
+        "backoff_multiply": 2,
+        "max_backoff_ms": 30000,
+        "max_attempts": 1
+      },
+      "metadata": {
+        "input_ids": [
+          "agent-a",
+          "agent-b"
+        ],
+        "label": "agg-collect Aggregation(collect aggregation)",
+        "output_name": "final_answer",
+        "output_format": "text",
+        "aggregation_anchor_id": "agg-collect",
+        "aggregation_method": "collect",
+        "presentation_result_id": "result-collect"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e3",
+      "source": "agent-a",
+      "target": "agg-collect"
+    },
+    {
+      "id": "e4",
+      "source": "agent-b",
+      "target": "agg-collect"
+    }
+  ],
+  "context": {
+    "user_prompt": "What is 2 + 2? Reply with just the number."
+  }
+}

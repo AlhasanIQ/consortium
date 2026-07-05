@@ -1,0 +1,104 @@
+{
+  "id": "",
+  "name": "builder-aggregation-scoring",
+  "description": "",
+  "nodes": [
+    {
+      "id": "agent-a",
+      "type": "prompt",
+      "prompt": "You are an expert. Solve: {{user_prompt}}",
+      "system_prompt": "You are an expert. Solve: {{user_prompt}}",
+      "model": "openai/gpt-4o-mini",
+      "temperature": 0.2,
+      "max_tokens": -1,
+      "timeout_seconds": 180,
+      "retry_policy": {
+        "backoff_ms": 1000,
+        "backoff_multiply": 2,
+        "max_backoff_ms": 30000,
+        "max_attempts": 5
+      },
+      "metadata": {
+        "label": "agent-a Agent(agent-a)"
+      }
+    },
+    {
+      "id": "agent-b",
+      "type": "prompt",
+      "prompt": "You are an expert. Solve: {{user_prompt}}",
+      "system_prompt": "You are an expert. Solve: {{user_prompt}}",
+      "model": "anthropic/claude-sonnet-4.5",
+      "temperature": 0.2,
+      "max_tokens": -1,
+      "timeout_seconds": 180,
+      "retry_policy": {
+        "backoff_ms": 1000,
+        "backoff_multiply": 2,
+        "max_backoff_ms": 30000,
+        "max_attempts": 5
+      },
+      "metadata": {
+        "label": "agent-b Agent(agent-b)"
+      }
+    },
+    {
+      "id": "agg-scoring",
+      "type": "result",
+      "output_name": "final_answer",
+      "output_format": "text",
+      "aggregation_method": "scoring",
+      "aggregation_config": {
+        "scoring_model": "openai/gpt-5-mini",
+        "system_prompt": "You score responses against the rubric.",
+        "prompt": "Question: {{prompt}}\n\nResponse: {{response}}\n\nRubric:\n{{rubric}}",
+        "temperature": 0,
+        "max_tokens": -1,
+        "rubric": [
+          {
+            "name": "Correctness",
+            "weight": 0.7,
+            "description": "Correct answer and reasoning"
+          },
+          {
+            "name": "Clarity",
+            "weight": 0.3,
+            "description": "Clear explanation"
+          }
+        ]
+      },
+      "retry_policy": {
+        "backoff_ms": 1000,
+        "backoff_multiply": 2,
+        "max_backoff_ms": 30000,
+        "max_attempts": 1
+      },
+      "metadata": {
+        "input_ids": [
+          "agent-a",
+          "agent-b"
+        ],
+        "label": "agg-scoring Aggregation(scoring aggregation)",
+        "output_name": "final_answer",
+        "output_format": "text",
+        "aggregation_anchor_id": "agg-scoring",
+        "aggregation_method": "scoring",
+        "presentation_result_id": "result-scoring"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e3",
+      "source": "agent-a",
+      "target": "agg-scoring"
+    },
+    {
+      "id": "e4",
+      "source": "agent-b",
+      "target": "agg-scoring"
+    }
+  ],
+  "context": {
+    "user_prompt": "What is 2 + 2? Reply with just the number."
+  }
+}

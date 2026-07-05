@@ -1,0 +1,113 @@
+{
+  "created_at": "2026-06-23T00:00:00Z",
+  "description": "Reusable L0 aggregation workflow that collects candidate outputs without evaluation",
+  "edges": [
+    {
+      "id": "edge-input-collect",
+      "source": "input-contract",
+      "target": "op-collect"
+    },
+    {
+      "id": "edge-collect-result",
+      "source": "op-collect",
+      "target": "result-aggregation"
+    }
+  ],
+  "id": "aggregation-collect",
+  "metadata": {
+    "tags": [
+      "aggregation",
+      "collect"
+    ],
+    "input_contract": {
+      "aggregation_config": "method-specific configuration supplied by the parent aggregation node",
+      "candidate_ids": "ordered IDs for upstream candidate nodes",
+      "candidate_models": "model IDs keyed by candidate ID",
+      "candidates": "ordered candidate outputs or structured candidate objects",
+      "user_prompt": "original user prompt"
+    }
+  },
+  "name": "Aggregation Collect",
+  "nodes": [
+    {
+      "data": {
+        "config": {
+          "description": "Parent-supplied aggregation inputs",
+          "name": "aggregation_inputs",
+          "schema": {
+            "aggregation_config": {
+              "required": false,
+              "type": "object"
+            },
+            "candidate_ids": {
+              "required": false,
+              "type": "array"
+            },
+            "candidate_models": {
+              "required": false,
+              "type": "object"
+            },
+            "candidates": {
+              "required": true,
+              "type": "array"
+            },
+            "user_prompt": {
+              "required": true,
+              "type": "string"
+            }
+          }
+        },
+        "label": "Aggregation Inputs",
+        "type": "input"
+      },
+      "id": "input-contract",
+      "position": {
+        "x": 260,
+        "y": 80
+      },
+      "type": "input"
+    },
+    {
+      "data": {
+        "config": {
+          "description": "Collect ordered candidate outputs into structured text",
+          "name": "Collect Inputs",
+          "operationConfig": {
+            "candidates": "{{candidates}}",
+            "separator": "\n---\n"
+          },
+          "operationType": "collect_inputs"
+        },
+        "label": "Collect Inputs",
+        "type": "operation"
+      },
+      "id": "op-collect",
+      "position": {
+        "x": 120,
+        "y": 370
+      },
+      "type": "operation"
+    },
+    {
+      "data": {
+        "config": {
+          "aggregationMethod": "collect",
+          "name": "aggregation_result",
+          "outputFormat": "text",
+          "retryPolicy": {
+            "max_attempts": 1
+          }
+        },
+        "label": "Aggregation Result",
+        "type": "result"
+      },
+      "id": "result-aggregation",
+      "position": {
+        "x": 240,
+        "y": 720
+      },
+      "type": "result"
+    }
+  ],
+  "updated_at": "2026-06-23T00:00:00Z"
+}

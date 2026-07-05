@@ -1,0 +1,393 @@
+{
+  "created_at": "2024-01-01T00:00:00Z",
+  "description": "Multi-model reasoning workflow where each agent scores every other agent's response",
+  "edges": [
+    {
+      "id": "edge-input-prompt-agent-deepseek-flash",
+      "source": "input-prompt",
+      "target": "agent-deepseek-flash"
+    },
+    {
+      "id": "edge-input-prompt-agent-minimax",
+      "source": "input-prompt",
+      "target": "agent-minimax"
+    },
+    {
+      "id": "edge-input-prompt-agent-mimo",
+      "source": "input-prompt",
+      "target": "agent-mimo"
+    },
+    {
+      "id": "edge-agent-deepseek-flash-aggregation-peer-matrix",
+      "source": "agent-deepseek-flash",
+      "target": "aggregation-peer-matrix"
+    },
+    {
+      "id": "edge-agent-minimax-aggregation-peer-matrix",
+      "source": "agent-minimax",
+      "target": "aggregation-peer-matrix"
+    },
+    {
+      "id": "edge-agent-mimo-aggregation-peer-matrix",
+      "source": "agent-mimo",
+      "target": "aggregation-peer-matrix"
+    },
+    {
+      "id": "edge-aggregation-peer-matrix-result-peer-matrix",
+      "source": "aggregation-peer-matrix",
+      "target": "result-peer-matrix"
+    }
+  ],
+  "id": "reasoning-peer-score-pick-cheap",
+  "metadata": {
+    "tags": [
+      "expensive",
+      "multi-model",
+      "peer-review",
+      "reasoning"
+    ]
+  },
+  "name": "Peer Score Pick (Cheap)",
+  "nodes": [
+    {
+      "data": {
+        "config": {
+          "description": "The question to send to all models",
+          "maxTokens": -1,
+          "name": "user_prompt",
+          "schema": {
+            "user_prompt": {
+              "required": true,
+              "type": "string"
+            }
+          }
+        },
+        "label": "User Prompt",
+        "type": "input"
+      },
+      "id": "input-prompt",
+      "position": {
+        "x": 856,
+        "y": 80
+      },
+      "type": "input"
+    },
+    {
+      "data": {
+        "config": {
+          "maxTokens": -1,
+          "model": "deepseek/deepseek-v4-flash",
+          "name": "DeepSeek V4 Flash",
+          "openRouterReasoning": {
+            "effort": "high"
+          },
+          "provider": "openrouter",
+          "systemPrompt": "You are an expert problem solver. Think through problems carefully:\n1. Identify what is being asked\n2. Consider the key facts and evidence\n3. Reason step by step through the problem\n4. Check your reasoning for errors or gaps\n5. State your final answer clearly\n\nBe precise and thorough. If you are uncertain, explain why.",
+          "temperature": 0,
+          "timeoutSeconds": 180,
+          "userPrompt": "{{user_prompt}}",
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000
+          }
+        },
+        "label": "DeepSeek V4 Flash",
+        "type": "agent"
+      },
+      "id": "agent-deepseek-flash",
+      "position": {
+        "x": 1312,
+        "y": 370
+      },
+      "type": "agent"
+    },
+    {
+      "data": {
+        "config": {
+          "maxTokens": -1,
+          "model": "minimax/minimax-m3",
+          "name": "MiniMax M3",
+          "openRouterReasoning": {
+            "effort": "high"
+          },
+          "provider": "openrouter",
+          "systemPrompt": "You are an expert problem solver. Think through problems carefully:\n1. Identify what is being asked\n2. Consider the key facts and evidence\n3. Reason step by step through the problem\n4. Check your reasoning for errors or gaps\n5. State your final answer clearly\n\nBe precise and thorough. If you are uncertain, explain why.",
+          "temperature": 0,
+          "timeoutSeconds": 180,
+          "userPrompt": "{{user_prompt}}",
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000,
+            "adaptive_reasoning": {
+              "trigger_error_codes": [
+                "OUTPUT_TRUNCATED_EMPTY",
+                "TIMEOUT"
+              ],
+              "activate_after_consecutive": 2,
+              "ladder": [
+                "high",
+                "medium",
+                "low"
+              ]
+            }
+          }
+        },
+        "label": "MiniMax M3",
+        "type": "agent"
+      },
+      "id": "agent-minimax",
+      "position": {
+        "x": 120,
+        "y": 370
+      },
+      "type": "agent"
+    },
+    {
+      "data": {
+        "config": {
+          "maxTokens": -1,
+          "model": "xiaomi/mimo-v2.5",
+          "name": "MiMo V2.5",
+          "openRouterReasoning": {
+            "effort": "high"
+          },
+          "provider": "openrouter",
+          "systemPrompt": "You are an expert problem solver. Think through problems carefully:\n1. Identify what is being asked\n2. Consider the key facts and evidence\n3. Reason step by step through the problem\n4. Check your reasoning for errors or gaps\n5. State your final answer clearly\n\nBe precise and thorough. If you are uncertain, explain why.",
+          "temperature": 0,
+          "timeoutSeconds": 180,
+          "userPrompt": "{{user_prompt}}",
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000
+          }
+        },
+        "label": "MiMo V2.5",
+        "type": "agent"
+      },
+      "id": "agent-mimo",
+      "position": {
+        "x": 716,
+        "y": 370
+      },
+      "type": "agent"
+    },
+    {
+      "id": "aggregation-peer-matrix",
+      "type": "aggregation",
+      "position": {
+        "x": 806,
+        "y": 720
+      },
+      "data": {
+        "type": "aggregation",
+        "label": "Peer Matrix Aggregation",
+        "config": {
+          "name": "Peer Matrix Aggregation",
+          "description": "The winning response selected by peer evaluation",
+          "aggregationMethod": "peer_matrix",
+          "aggregationConfig": {
+            "eval_system_prompt": "You are a critical evaluator scoring AI responses. Be discriminating and look for meaningful differences. A score of 10 is reserved for exceptional responses; most good responses score 6-8.\n\nScore on a scale of 1-10:\n- 9-10: Exceptional - comprehensive, insightful, no flaws\n- 7-8: Good - accurate and complete with minor issues\n- 5-6: Adequate - correct but lacking depth or clarity\n- 3-4: Poor - significant gaps or errors\n- 1-2: Very poor - mostly incorrect or irrelevant\n\nIMPORTANT: Be critical. Find weaknesses. Differentiate between responses.\n\nYou MUST respond with valid JSON where each criterion key maps to a reasoning and score:\n{\"criterion_key\": {\"reasoning\": \"<1-2 sentences>\", \"score\": <1-10>}, ...}\n\nUse the exact criterion keys shown in the rubric.",
+            "extraction_strategy": "regex",
+            "extraction_pattern": "(?im)(?:^|\\n|[^\\n]{0,60}\\b)(?:final answer|answer)\\s*(?:(?:is)?\\s*[:\\-]\\s*(?:\\(?([A-Z])\\)?\\s*(?:[.)]?\\s*$|\\s+(?:is|was|are|because|since|as|therefore|so)\\b)|\\(?([^\\n)]{1,80}?)\\)?\\s*(?:[.;]\\s*$|$|\\n|[.;]\\s+(?:because|since|as|this|the|it)\\b|,?\\s+(?:because|since|as|therefore|so)\\b))|is\\s*:?\\s*(?:\\(?([A-Z])\\)?\\s*(?:[.)]?\\s*$|\\s+(?:is|was|are|because|since|as|therefore|so)\\b)|([-+]?(?:\\d+(?:\\.\\d+)?|[A-Z]\\s*=\\s*[-+]?\\d+(?:\\.\\d+)?))\\s*(?:[.;]?\\s*$|,?\\s+(?:because|since|as|therefore|so)\\b)))",
+            "max_tokens": -1,
+            "normalization": "none",
+            "rubric": [
+              {
+                "name": "Logical Soundness",
+                "weight": 0.4,
+                "description": "Is the reasoning internally consistent, free of logical fallacies, and does the conclusion follow from the evidence presented?"
+              },
+              {
+                "name": "Evidence Analysis",
+                "weight": 0.3,
+                "description": "Are relevant facts, data, assumptions, and constraints properly identified and analyzed? Are important alternatives or edge cases addressed when they matter?"
+              },
+              {
+                "name": "Completeness",
+                "weight": 0.2,
+                "description": "Does the response address all aspects of the question? Are edge cases, caveats, or alternative interpretations considered?"
+              },
+              {
+                "name": "Clarity",
+                "weight": 0.1,
+                "description": "Is the response well-structured and easy to follow?"
+              }
+            ],
+            "openRouterReasoning": {
+              "effort": "low"
+            },
+            "rubric_mode": "static",
+            "temperature": 0,
+            "eval_prompt": "Question: {{question}}\\n\\nResponse to evaluate:\\n{{response}}\\n\\n{{rubric}}Score this response on each criterion (1-10).",
+            "max_parallel": 6
+          },
+          "timeoutSeconds": 180,
+          "retryPolicy": {
+            "max_attempts": 1
+          },
+          "aggregationWorkflowId": "aggregation-peer-matrix"
+        }
+      }
+    },
+    {
+      "data": {
+        "config": {
+          "name": "peer_evaluated_response",
+          "description": "The winning response selected by peer evaluation",
+          "outputFormat": "text"
+        },
+        "label": "Peer Matrix Result",
+        "type": "result"
+      },
+      "id": "result-peer-matrix",
+      "position": {
+        "x": 836,
+        "y": 1090
+      },
+      "type": "result"
+    }
+  ],
+  "updated_at": "2024-01-01T00:00:00Z",
+  "version": "1.0.0",
+  "optimize": {
+    "params": [
+      {
+        "path": "nodes[agent-deepseek-flash].data.config.model",
+        "type": "model",
+        "candidates": [
+          "xiaomi/mimo-v2.5",
+          "deepseek/deepseek-v4-flash",
+          "minimax/minimax-m3"
+        ],
+        "group": "agent_models"
+      },
+      {
+        "path": "nodes[agent-deepseek-flash].data.config.systemPrompt",
+        "type": "prompt",
+        "group": "agent_prompts"
+      },
+      {
+        "path": "nodes[agent-deepseek-flash].data.config.temperature",
+        "type": "float",
+        "range": {
+          "min": 0,
+          "max": 1,
+          "step": 0.1
+        },
+        "group": "agent_temperatures"
+      },
+      {
+        "path": "nodes[agent-minimax].data.config.model",
+        "type": "model",
+        "candidates": [
+          "xiaomi/mimo-v2.5",
+          "deepseek/deepseek-v4-flash",
+          "minimax/minimax-m3"
+        ],
+        "group": "agent_models"
+      },
+      {
+        "path": "nodes[agent-minimax].data.config.systemPrompt",
+        "type": "prompt",
+        "group": "agent_prompts"
+      },
+      {
+        "path": "nodes[agent-minimax].data.config.temperature",
+        "type": "float",
+        "range": {
+          "min": 0,
+          "max": 1,
+          "step": 0.1
+        },
+        "group": "agent_temperatures"
+      },
+      {
+        "path": "nodes[agent-mimo].data.config.model",
+        "type": "model",
+        "candidates": [
+          "xiaomi/mimo-v2.5",
+          "deepseek/deepseek-v4-flash",
+          "minimax/minimax-m3"
+        ],
+        "group": "agent_models"
+      },
+      {
+        "path": "nodes[agent-mimo].data.config.systemPrompt",
+        "type": "prompt",
+        "group": "agent_prompts"
+      },
+      {
+        "path": "nodes[agent-mimo].data.config.temperature",
+        "type": "float",
+        "range": {
+          "min": 0,
+          "max": 1,
+          "step": 0.1
+        },
+        "group": "agent_temperatures"
+      },
+      {
+        "path": "nodes[aggregation-peer-matrix].data.config.aggregationConfig.temperature",
+        "type": "float",
+        "range": {
+          "min": 0,
+          "max": 1,
+          "step": 0.1
+        },
+        "group": "aggregation_temperatures"
+      },
+      {
+        "path": "nodes[aggregation-peer-matrix].data.config.aggregationConfig.eval_system_prompt",
+        "type": "prompt",
+        "group": "aggregation_prompts"
+      }
+    ],
+    "locked": [
+      "nodes[aggregation-peer-matrix].data.config.aggregationMethod"
+    ],
+    "objectives": [
+      {
+        "metric": "accuracy",
+        "direction": "maximize",
+        "weight": 3
+      },
+      {
+        "metric": "cost_per_item",
+        "direction": "minimize",
+        "weight": 1
+      }
+    ],
+    "constraints": [
+      {
+        "metric": "cost_per_item",
+        "op": "<=",
+        "value": 0.05
+      },
+      {
+        "metric": "parse_rate",
+        "op": ">=",
+        "value": 0.95
+      }
+    ],
+    "stop_policy": {
+      "max_generations": 20,
+      "budget_usd": 10,
+      "plateau_generations": 5,
+      "stability_top_k": 3
+    },
+    "promotion_policy": {
+      "min_accuracy_gain": 0.02,
+      "require_generalization_check": true,
+      "no_regression_on": [
+        "parse_rate",
+        "cost_per_item"
+      ]
+    }
+  }
+}

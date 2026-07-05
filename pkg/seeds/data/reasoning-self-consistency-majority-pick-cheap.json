@@ -1,0 +1,341 @@
+{
+  "created_at": "2026-02-14T00:00:00Z",
+  "description": "Self-consistency reasoning workflow — same model queried 3 times at higher temperature, majority vote selects the most consistent answer",
+  "edges": [
+    {
+      "id": "edge-input-prompt-agent-sample-1",
+      "source": "input-prompt",
+      "target": "agent-sample-1"
+    },
+    {
+      "id": "edge-input-prompt-agent-sample-2",
+      "source": "input-prompt",
+      "target": "agent-sample-2"
+    },
+    {
+      "id": "edge-input-prompt-agent-sample-3",
+      "source": "input-prompt",
+      "target": "agent-sample-3"
+    },
+    {
+      "id": "edge-agent-sample-1-aggregation-vote",
+      "source": "agent-sample-1",
+      "target": "aggregation-vote"
+    },
+    {
+      "id": "edge-agent-sample-2-aggregation-vote",
+      "source": "agent-sample-2",
+      "target": "aggregation-vote"
+    },
+    {
+      "id": "edge-agent-sample-3-aggregation-vote",
+      "source": "agent-sample-3",
+      "target": "aggregation-vote"
+    },
+    {
+      "id": "edge-aggregation-vote-result-vote",
+      "source": "aggregation-vote",
+      "target": "result-vote"
+    }
+  ],
+  "id": "reasoning-self-consistency-majority-pick-cheap",
+  "metadata": {
+    "tags": [
+      "experimental",
+      "majority-vote",
+      "reasoning",
+      "self-consistency",
+      "single-model"
+    ]
+  },
+  "name": "Self-Consistency Majority Pick (Cheap)",
+  "nodes": [
+    {
+      "data": {
+        "config": {
+          "description": "The question to send for self-consistency evaluation",
+          "maxTokens": -1,
+          "name": "user_prompt",
+          "schema": {
+            "user_prompt": {
+              "required": true,
+              "type": "string"
+            }
+          }
+        },
+        "label": "User Prompt",
+        "type": "input"
+      },
+      "id": "input-prompt",
+      "position": {
+        "x": 856,
+        "y": 80
+      },
+      "type": "input"
+    },
+    {
+      "data": {
+        "config": {
+          "maxTokens": -1,
+          "model": "xiaomi/mimo-v2.5",
+          "name": "MiMo V2.5",
+          "openRouterReasoning": {
+            "effort": "high"
+          },
+          "provider": "openrouter",
+          "systemPrompt": "You are an expert problem solver. Think through problems carefully:\n1. Identify what is being asked\n2. Consider the key facts and evidence\n3. Reason step by step through the problem\n4. Check your reasoning for errors or gaps\n5. State your final answer clearly\n\nBe precise and thorough. If you are uncertain, explain why.",
+          "temperature": 0.5,
+          "timeoutSeconds": 180,
+          "userPrompt": "{{user_prompt}}",
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000
+          }
+        },
+        "label": "MiMo V2.5",
+        "type": "agent"
+      },
+      "id": "agent-sample-1",
+      "position": {
+        "x": 1312,
+        "y": 370
+      },
+      "type": "agent"
+    },
+    {
+      "data": {
+        "config": {
+          "maxTokens": -1,
+          "model": "xiaomi/mimo-v2.5",
+          "name": "MiMo V2.5",
+          "openRouterReasoning": {
+            "effort": "high"
+          },
+          "provider": "openrouter",
+          "systemPrompt": "You are an expert problem solver. Think through problems carefully:\n1. Identify what is being asked\n2. Consider the key facts and evidence\n3. Reason step by step through the problem\n4. Check your reasoning for errors or gaps\n5. State your final answer clearly\n\nBe precise and thorough. If you are uncertain, explain why.",
+          "temperature": 0.5,
+          "timeoutSeconds": 180,
+          "userPrompt": "{{user_prompt}}",
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000
+          }
+        },
+        "label": "MiMo V2.5",
+        "type": "agent"
+      },
+      "id": "agent-sample-2",
+      "position": {
+        "x": 716,
+        "y": 370
+      },
+      "type": "agent"
+    },
+    {
+      "data": {
+        "config": {
+          "maxTokens": -1,
+          "model": "xiaomi/mimo-v2.5",
+          "name": "MiMo V2.5",
+          "openRouterReasoning": {
+            "effort": "high"
+          },
+          "provider": "openrouter",
+          "systemPrompt": "You are an expert problem solver. Think through problems carefully:\n1. Identify what is being asked\n2. Consider the key facts and evidence\n3. Reason step by step through the problem\n4. Check your reasoning for errors or gaps\n5. State your final answer clearly\n\nBe precise and thorough. If you are uncertain, explain why.",
+          "temperature": 0.5,
+          "timeoutSeconds": 180,
+          "userPrompt": "{{user_prompt}}",
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000
+          }
+        },
+        "label": "MiMo V2.5",
+        "type": "agent"
+      },
+      "id": "agent-sample-3",
+      "position": {
+        "x": 120,
+        "y": 370
+      },
+      "type": "agent"
+    },
+    {
+      "id": "aggregation-vote",
+      "type": "aggregation",
+      "position": {
+        "x": 806,
+        "y": 720
+      },
+      "data": {
+        "type": "aggregation",
+        "label": "Majority Vote Aggregation",
+        "config": {
+          "name": "Majority Vote Aggregation",
+          "description": "The most consistent answer selected by majority vote",
+          "aggregationMethod": "majority_vote",
+          "aggregationConfig": {
+            "extraction_strategy": "regex",
+            "tie_breaker_method": "synthesis",
+            "tie_breaker_model": "deepseek/deepseek-v4-pro",
+            "tie_breaker_temperature": 0,
+            "extraction_pattern": "(?im)(?:^|\\n|[^\\n]{0,60}\\b)(?:final answer|answer)\\s*(?:(?:is)?\\s*[:\\-]\\s*(?:\\(?([A-Z])\\)?\\s*(?:[.)]?\\s*$|\\s+(?:is|was|are|because|since|as|therefore|so)\\b)|\\(?([^\\n)]{1,80}?)\\)?\\s*(?:[.;]\\s*$|$|\\n|[.;]\\s+(?:because|since|as|this|the|it)\\b|,?\\s+(?:because|since|as|therefore|so)\\b))|is\\s*:?\\s*(?:\\(?([A-Z])\\)?\\s*(?:[.)]?\\s*$|\\s+(?:is|was|are|because|since|as|therefore|so)\\b)|([-+]?(?:\\d+(?:\\.\\d+)?|[A-Z]\\s*=\\s*[-+]?\\d+(?:\\.\\d+)?))\\s*(?:[.;]?\\s*$|,?\\s+(?:because|since|as|therefore|so)\\b)))",
+            "system_prompt": "You are a synthesis agent that has received responses from multiple AI advisors. Your job is to deliver the definitive answer — informed by all responses but relying on your own judgment.\n\nRules:\n1. Analyze each response for correctness, completeness, and reasoning quality.\n2. Construct your answer using the strongest reasoning and evidence across all responses.\n3. Where responses conflict, use your judgment to determine which reasoning is more sound — do not default to the majority or to any single response.\n4. If responses use a structured answer format (e.g. \"Final answer: X\"), preserve that format in your synthesis.\n5. End with a clear, definitive conclusion.",
+            "prompt": "Original Question: {{prompt}}\n\n{{responses}}\n\nPlease provide a synthesized response that captures the best insights from all models.",
+            "max_tokens": -1
+          },
+          "timeoutSeconds": 120,
+          "retryPolicy": {
+            "max_attempts": 1
+          },
+          "aggregationWorkflowId": "aggregation-majority-vote"
+        }
+      }
+    },
+    {
+      "data": {
+        "config": {
+          "name": "consistent_response",
+          "description": "The most consistent answer selected by majority vote",
+          "outputFormat": "text"
+        },
+        "label": "Majority Vote Result",
+        "type": "result"
+      },
+      "id": "result-vote",
+      "position": {
+        "x": 836,
+        "y": 1090
+      },
+      "type": "result"
+    }
+  ],
+  "updated_at": "2026-02-14T00:00:00Z",
+  "version": "1.0.0",
+  "optimize": {
+    "params": [
+      {
+        "path": "nodes[agent-sample-1].data.config.model",
+        "type": "model",
+        "candidates": [
+          "xiaomi/mimo-v2.5",
+          "deepseek/deepseek-v4-flash",
+          "minimax/minimax-m3"
+        ],
+        "group": "agent_models"
+      },
+      {
+        "path": "nodes[agent-sample-1].data.config.systemPrompt",
+        "type": "prompt",
+        "group": "agent_prompts"
+      },
+      {
+        "path": "nodes[agent-sample-1].data.config.temperature",
+        "type": "float",
+        "range": {
+          "min": 0,
+          "max": 1,
+          "step": 0.1
+        },
+        "group": "agent_temperatures"
+      },
+      {
+        "path": "nodes[agent-sample-2].data.config.model",
+        "type": "model",
+        "candidates": [
+          "xiaomi/mimo-v2.5",
+          "deepseek/deepseek-v4-flash",
+          "minimax/minimax-m3"
+        ],
+        "group": "agent_models"
+      },
+      {
+        "path": "nodes[agent-sample-2].data.config.systemPrompt",
+        "type": "prompt",
+        "group": "agent_prompts"
+      },
+      {
+        "path": "nodes[agent-sample-2].data.config.temperature",
+        "type": "float",
+        "range": {
+          "min": 0,
+          "max": 1,
+          "step": 0.1
+        },
+        "group": "agent_temperatures"
+      },
+      {
+        "path": "nodes[agent-sample-3].data.config.model",
+        "type": "model",
+        "candidates": [
+          "xiaomi/mimo-v2.5",
+          "deepseek/deepseek-v4-flash",
+          "minimax/minimax-m3"
+        ],
+        "group": "agent_models"
+      },
+      {
+        "path": "nodes[agent-sample-3].data.config.systemPrompt",
+        "type": "prompt",
+        "group": "agent_prompts"
+      },
+      {
+        "path": "nodes[agent-sample-3].data.config.temperature",
+        "type": "float",
+        "range": {
+          "min": 0,
+          "max": 1,
+          "step": 0.1
+        },
+        "group": "agent_temperatures"
+      }
+    ],
+    "locked": [
+      "nodes[aggregation-vote].data.config.aggregationMethod"
+    ],
+    "objectives": [
+      {
+        "metric": "accuracy",
+        "direction": "maximize",
+        "weight": 3
+      },
+      {
+        "metric": "cost_per_item",
+        "direction": "minimize",
+        "weight": 1
+      }
+    ],
+    "constraints": [
+      {
+        "metric": "cost_per_item",
+        "op": "<=",
+        "value": 0.05
+      },
+      {
+        "metric": "parse_rate",
+        "op": ">=",
+        "value": 0.95
+      }
+    ],
+    "stop_policy": {
+      "max_generations": 20,
+      "budget_usd": 10,
+      "plateau_generations": 5,
+      "stability_top_k": 3
+    },
+    "promotion_policy": {
+      "min_accuracy_gain": 0.02,
+      "require_generalization_check": true,
+      "no_regression_on": [
+        "parse_rate",
+        "cost_per_item"
+      ]
+    }
+  }
+}

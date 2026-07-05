@@ -1,0 +1,123 @@
+{
+  "id": "composite-judge-synthesis-cheap",
+  "name": "Composite: Judge Then Synthesize (Cheap)",
+  "description": "L2 workflow that composes L1 judge-pick and informed-captain synthesis through compiled workflow references.",
+  "metadata": {
+    "tags": [
+      "composite",
+      "l2",
+      "workflow_ref",
+      "cheap"
+    ]
+  },
+  "nodes": [
+    {
+      "id": "input-prompt",
+      "type": "input",
+      "data": {
+        "type": "input",
+        "label": "User Prompt",
+        "config": {
+          "name": "user_prompt",
+          "description": "The question or prompt to send through the composed reasoning workflows",
+          "maxTokens": -1,
+          "schema": {
+            "user_prompt": {
+              "type": "string",
+              "required": true
+            }
+          }
+        }
+      },
+      "position": {
+        "x": 279,
+        "y": 80
+      }
+    },
+    {
+      "id": "judge-phase",
+      "type": "workflow_ref",
+      "data": {
+        "type": "workflow_ref",
+        "label": "Judge Pick Phase",
+        "config": {
+          "name": "Judge Pick Phase",
+          "description": "Compile reasoning-judge-pick-cheap into this composite workflow",
+          "workflowId": "reasoning-judge-pick-cheap",
+          "inputTemplate": {
+            "user_prompt": "{{user_prompt}}"
+          },
+          "outputKey": "judged_response"
+        }
+      },
+      "position": {
+        "x": 229,
+        "y": 370
+      }
+    },
+    {
+      "id": "synthesis-phase",
+      "type": "workflow_ref",
+      "data": {
+        "type": "workflow_ref",
+        "label": "Synthesis Phase",
+        "config": {
+          "name": "Synthesis Phase",
+          "description": "Compile reasoning-informed-captain-synthesis-cheap into this composite workflow",
+          "workflowId": "reasoning-informed-captain-synthesis-cheap",
+          "inputTemplate": {
+            "user_prompt": "Original prompt:\n{{user_prompt}}\n\nJudge phase answer:\n{{judge-phase}}\n\nUse the judge phase as an additional signal while producing a final synthesized answer."
+          },
+          "outputKey": "synthesized_response"
+        }
+      },
+      "position": {
+        "x": 120,
+        "y": 700
+      }
+    },
+    {
+      "id": "final-result",
+      "type": "result",
+      "data": {
+        "type": "result",
+        "label": "Composite Result",
+        "config": {
+          "name": "composite_answer",
+          "description": "Collected judge and synthesis outputs from the composed L1 workflows",
+          "outputFormat": "text",
+          "aggregationMethod": "collect",
+          "retryPolicy": {
+            "max_attempts": 1
+          }
+        }
+      },
+      "position": {
+        "x": 259,
+        "y": 1030
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge-input-prompt-judge-phase",
+      "source": "input-prompt",
+      "target": "judge-phase"
+    },
+    {
+      "id": "edge-judge-phase-synthesis-phase",
+      "source": "judge-phase",
+      "target": "synthesis-phase"
+    },
+    {
+      "id": "edge-judge-phase-final-result",
+      "source": "judge-phase",
+      "target": "final-result"
+    },
+    {
+      "id": "edge-synthesis-phase-final-result",
+      "source": "synthesis-phase",
+      "target": "final-result"
+    }
+  ]
+}

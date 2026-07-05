@@ -1,0 +1,90 @@
+{
+  "id": "",
+  "name": "builder-aggregation-majority_vote",
+  "description": "",
+  "nodes": [
+    {
+      "id": "agent-a",
+      "type": "prompt",
+      "prompt": "You are an expert. Solve: {{user_prompt}}",
+      "system_prompt": "You are an expert. Solve: {{user_prompt}}",
+      "model": "openai/gpt-4o-mini",
+      "temperature": 0.2,
+      "max_tokens": -1,
+      "timeout_seconds": 180,
+      "retry_policy": {
+        "backoff_ms": 1000,
+        "backoff_multiply": 2,
+        "max_backoff_ms": 30000,
+        "max_attempts": 5
+      },
+      "metadata": {
+        "label": "agent-a Agent(agent-a)"
+      }
+    },
+    {
+      "id": "agent-b",
+      "type": "prompt",
+      "prompt": "You are an expert. Solve: {{user_prompt}}",
+      "system_prompt": "You are an expert. Solve: {{user_prompt}}",
+      "model": "anthropic/claude-sonnet-4.5",
+      "temperature": 0.2,
+      "max_tokens": -1,
+      "timeout_seconds": 180,
+      "retry_policy": {
+        "backoff_ms": 1000,
+        "backoff_multiply": 2,
+        "max_backoff_ms": 30000,
+        "max_attempts": 5
+      },
+      "metadata": {
+        "label": "agent-b Agent(agent-b)"
+      }
+    },
+    {
+      "id": "agg-majority_vote",
+      "type": "result",
+      "output_name": "final_answer",
+      "output_format": "text",
+      "aggregation_method": "majority_vote",
+      "aggregation_config": {
+        "extraction_strategy": "regex",
+        "extraction_pattern": "Answer:\\s*([A-D])",
+        "tie_breaker_method": "first"
+      },
+      "retry_policy": {
+        "backoff_ms": 1000,
+        "backoff_multiply": 2,
+        "max_backoff_ms": 30000,
+        "max_attempts": 1
+      },
+      "metadata": {
+        "input_ids": [
+          "agent-a",
+          "agent-b"
+        ],
+        "label": "agg-majority_vote Aggregation(majority_vote aggregation)",
+        "output_name": "final_answer",
+        "output_format": "text",
+        "aggregation_anchor_id": "agg-majority_vote",
+        "aggregation_method": "majority_vote",
+        "presentation_result_id": "result-majority_vote"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e3",
+      "source": "agent-a",
+      "target": "agg-majority_vote"
+    },
+    {
+      "id": "e4",
+      "source": "agent-b",
+      "target": "agg-majority_vote"
+    }
+  ],
+  "context": {
+    "user_prompt": "What is 2 + 2? Reply with just the number."
+  }
+}

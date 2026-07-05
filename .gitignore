@@ -1,0 +1,124 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Go workspace file
+go.work
+
+# Build artifacts
+/bin/*
+admin-panel
+
+# Embedded frontend assets (copied during build-release)
+pkg/static/dist/
+
+# Environment files with secrets
+.env
+.env.local
+.env.production
+
+# Database
+*.db
+*.db.bak*
+*.db-shm
+*.db-wal
+
+# IDE
+.vscode
+.idea
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/*.log
+!logs/.gitkeep
+
+# Server PID file
+.server.pid
+.frontend.pid
+
+# Old entries
+*.log*.db
+/server
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/bun.lock
+package-lock.json
+
+# Local assistant/tooling files
+.claude/
+.agents/
+.superpowers/
+.mcp.json
+claude-flow.config.json
+.swarm/
+.hive-mind/
+.claude-flow/
+memory/
+coordination/
+memory/claude-flow-data.json
+memory/sessions/*
+!memory/sessions/README.md
+memory/agents/*
+!memory/agents/README.md
+coordination/memory_bank/*
+coordination/subtasks/*
+coordination/orchestration/*
+*.db
+*.db-journal
+*.db-wal
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+claude-flow
+# Removed Windows wrapper files per user request
+hive-mind-prompt-*.txt
+
+node_modules/
+scripts/openrouter-models.json
+
+# Benchmark artifacts
+/bench
+/loadtest
+benchmarks/data/**/*.jsonl
+benchmarks/results/**/*.json
+benchmarks/models_repo/*.json
+!benchmarks/models_repo/.gitkeep
+.tmp/*
+
+# Benchloop runtime artifacts
+benchmarks/loop/state.json
+benchmarks/loop/decision.json
+benchmarks/loop/matrix_proposal.json
+benchmarks/loop/matrix.lock.json
+benchmarks/loop/session_index.jsonl
+benchmarks/loop/sessions/
+benchmarks/loop/baselines/
+benchmarks/loop/baselines.prev/
+benchmarks/loop/iterations/
+benchmarks/loop/archive/
+benchmarks/loop/.agent.pid
+benchmarks/loop/.lock
+
+.venv/*
+
+.desloppify/
+.desloppify.*/
+
+# Generated/scratch visuals
+docs/visuals/

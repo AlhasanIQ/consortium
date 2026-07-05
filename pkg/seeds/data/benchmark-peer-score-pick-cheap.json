@@ -1,0 +1,241 @@
+{
+  "version": "1.0.0",
+  "id": "benchmark-peer-score-pick-cheap",
+  "name": "Benchmark Peer Score Pick (Cheap)",
+  "description": "Parent benchmark wrapper for reasoning-peer-score-pick-cheap with strict benchmark_answer output",
+  "created_at": "2026-02-09T00:00:00Z",
+  "updated_at": "2026-02-09T00:00:00Z",
+  "nodes": [
+    {
+      "id": "input-prompt",
+      "type": "input",
+      "position": {
+        "x": 260,
+        "y": 80
+      },
+      "data": {
+        "type": "input",
+        "label": "Benchmark Question",
+        "config": {
+          "description": "A multiple-choice benchmark question with labeled options",
+          "maxTokens": -1,
+          "name": "user_prompt",
+          "schema": {
+            "user_prompt": {
+              "required": true,
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "child-reasoning-peer-score-pick-cheap",
+      "type": "child_workflow",
+      "position": {
+        "x": 210,
+        "y": 370
+      },
+      "data": {
+        "type": "child_workflow",
+        "label": "Run Peer Score Pick Cheap Child",
+        "config": {
+          "await": true,
+          "childWorkflowId": "reasoning-peer-score-pick-cheap",
+          "description": "Executes reasoning-peer-score-pick-cheap as a child workflow",
+          "inputTemplate": {
+            "user_prompt": "You are solving a multiple-choice question.\nChoose exactly one option and explain briefly why it is correct and not other options.\nRespond in this format:\nFinal answer: <ONE UPPERCASE LETTER>\nReasoning: <concise reasoning>\n\n{{user_prompt}}\n\nRemember: include both the final answer line and a brief reasoning line."
+          },
+          "maxTokens": -1,
+          "name": "Run Peer Score Pick Cheap Child",
+          "outputKey": "peer_evaluated_response",
+          "timeoutSeconds": 900,
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000
+          }
+        }
+      }
+    },
+    {
+      "id": "agent-contract",
+      "type": "contract_extract",
+      "position": {
+        "x": 120,
+        "y": 700
+      },
+      "data": {
+        "type": "contract_extract",
+        "label": "Benchmark Contract",
+        "config": {
+          "sourceVariable": "child-reasoning-peer-score-pick-cheap",
+          "extractionPatterns": [
+            "^\\s*([A-Za-z])\\s*$",
+            "(?i)\\b(?:final\\s+answer|answer)\\b(?:\\s+is)?\\s*[:\\-]?\\s*\\(?\\s*([A-Za-z])\\s*\\)?\\s*(?:$|\\n|[^A-Za-z])",
+            "^\\s*\\(?\\s*([A-Za-z])\\s*\\)?[\\.\\):\\-]"
+          ],
+          "maxTokens": 1024,
+          "model": "deepseek/deepseek-v4-flash",
+          "name": "Benchmark Contract",
+          "openRouterReasoning": {
+            "effort": "none"
+          },
+          "provider": "openrouter",
+          "systemPrompt": "You are a benchmark answer extractor, not a solver. Use ONLY the text in the section titled \"Reasoning workflow answer\" as the source of truth. Do NOT use external knowledge or re-evaluate the question. Extract the final selected option from that section and return exactly one uppercase letter (A-Z), with no punctuation or explanation.",
+          "temperature": 0,
+          "timeoutSeconds": 20,
+          "userPrompt": "Question and options:\n{{user_prompt}}\n\nReasoning workflow answer:\n{{child-reasoning-peer-score-pick-cheap}}\n\nReturn only the final single-letter answer:",
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000
+          }
+        }
+      }
+    },
+    {
+      "id": "aggregation-benchmark-answer",
+      "type": "aggregation",
+      "position": {
+        "x": 210,
+        "y": 1050
+      },
+      "data": {
+        "type": "aggregation",
+        "label": "Benchmark Answer Aggregation",
+        "config": {
+          "name": "Benchmark Answer Aggregation",
+          "description": "Canonical benchmark answer output",
+          "aggregationMethod": "collect",
+          "aggregationConfig": {},
+          "timeoutSeconds": 120,
+          "retryPolicy": {
+            "max_attempts": 1
+          },
+          "benchmarkOutputPackaging": true
+        }
+      }
+    },
+    {
+      "id": "result-benchmark-answer",
+      "type": "result",
+      "position": {
+        "x": 240,
+        "y": 1420
+      },
+      "data": {
+        "type": "result",
+        "label": "Benchmark Answer",
+        "config": {
+          "name": "benchmark_answer",
+          "description": "Canonical benchmark answer output",
+          "outputFormat": "text"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge-input-child",
+      "source": "input-prompt",
+      "target": "child-reasoning-peer-score-pick-cheap"
+    },
+    {
+      "id": "edge-child-contract",
+      "source": "child-reasoning-peer-score-pick-cheap",
+      "target": "agent-contract"
+    },
+    {
+      "id": "edge-agent-contract-aggregation-benchmark-answer",
+      "source": "agent-contract",
+      "target": "aggregation-benchmark-answer"
+    },
+    {
+      "id": "edge-aggregation-benchmark-answer-result-benchmark-answer",
+      "source": "aggregation-benchmark-answer",
+      "target": "result-benchmark-answer"
+    }
+  ],
+  "metadata": {
+    "tags": [
+      "benchmark",
+      "expensive",
+      "parent",
+      "reasoning-peer-score-pick-cheap",
+      "wrapper"
+    ]
+  },
+  "optimize": {
+    "params": [
+      {
+        "path": "nodes[agent-contract].data.config.model",
+        "type": "model",
+        "candidates": [
+          "xiaomi/mimo-v2.5",
+          "deepseek/deepseek-v4-flash",
+          "minimax/minimax-m3"
+        ],
+        "group": "agent_models"
+      },
+      {
+        "path": "nodes[agent-contract].data.config.systemPrompt",
+        "type": "prompt",
+        "group": "agent_prompts"
+      },
+      {
+        "path": "nodes[agent-contract].data.config.temperature",
+        "type": "float",
+        "range": {
+          "min": 0,
+          "max": 1,
+          "step": 0.1
+        },
+        "group": "agent_temperatures"
+      }
+    ],
+    "locked": [
+      "nodes[aggregation-benchmark-answer].data.config.aggregationMethod"
+    ],
+    "objectives": [
+      {
+        "metric": "accuracy",
+        "direction": "maximize",
+        "weight": 3
+      },
+      {
+        "metric": "cost_per_item",
+        "direction": "minimize",
+        "weight": 1
+      }
+    ],
+    "constraints": [
+      {
+        "metric": "cost_per_item",
+        "op": "<=",
+        "value": 0.05
+      },
+      {
+        "metric": "parse_rate",
+        "op": ">=",
+        "value": 0.95
+      }
+    ],
+    "stop_policy": {
+      "max_generations": 20,
+      "budget_usd": 10,
+      "plateau_generations": 5,
+      "stability_top_k": 3
+    },
+    "promotion_policy": {
+      "min_accuracy_gain": 0.02,
+      "require_generalization_check": true,
+      "no_regression_on": [
+        "parse_rate",
+        "cost_per_item"
+      ]
+    }
+  }
+}

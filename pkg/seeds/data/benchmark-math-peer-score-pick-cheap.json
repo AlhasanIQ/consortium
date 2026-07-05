@@ -1,0 +1,205 @@
+{
+  "version": "1.0.0",
+  "id": "benchmark-math-peer-score-pick-cheap",
+  "name": "Benchmark Math-500 Peer Score Pick (Cheap)",
+  "description": "Parent math benchmark wrapper for reasoning-peer-score-pick-cheap with expression output",
+  "created_at": "2026-02-09T00:00:00Z",
+  "updated_at": "2026-02-28T00:00:00Z",
+  "nodes": [
+    {
+      "id": "input-prompt",
+      "type": "input",
+      "position": {
+        "x": 170,
+        "y": 80
+      },
+      "data": {
+        "type": "input",
+        "label": "Benchmark Question",
+        "config": {
+          "description": "A math benchmark question",
+          "maxTokens": -1,
+          "name": "user_prompt",
+          "schema": {
+            "user_prompt": {
+              "required": true,
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "child-reasoning-peer-score-pick-cheap",
+      "type": "child_workflow",
+      "position": {
+        "x": 120,
+        "y": 370
+      },
+      "data": {
+        "type": "child_workflow",
+        "label": "Run Peer Score Pick Cheap Child",
+        "config": {
+          "await": true,
+          "childWorkflowId": "reasoning-peer-score-pick-cheap",
+          "description": "Executes reasoning-peer-score-pick-cheap as a child workflow",
+          "inputTemplate": {
+            "user_prompt": "You are solving a math reasoning problem.\nProvide concise, correct derivation steps.\nEnd with exactly one line in this format:\nFinal answer: <your final expression>\n\n{{user_prompt}}"
+          },
+          "maxTokens": -1,
+          "name": "Run Peer Score Pick Cheap Child",
+          "outputKey": "peer_evaluated_response",
+          "timeoutSeconds": 900,
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000
+          }
+        }
+      }
+    },
+    {
+      "id": "aggregation-benchmark-answer",
+      "type": "aggregation",
+      "position": {
+        "x": 120,
+        "y": 700
+      },
+      "data": {
+        "type": "aggregation",
+        "label": "Benchmark Answer Aggregation",
+        "config": {
+          "name": "Benchmark Answer Aggregation",
+          "description": "Canonical math benchmark answer output",
+          "aggregationMethod": "collect",
+          "aggregationConfig": {},
+          "timeoutSeconds": 120,
+          "retryPolicy": {
+            "max_attempts": 1
+          },
+          "benchmarkOutputPackaging": true
+        }
+      }
+    },
+    {
+      "id": "result-benchmark-answer",
+      "type": "result",
+      "position": {
+        "x": 150,
+        "y": 1070
+      },
+      "data": {
+        "type": "result",
+        "label": "Benchmark Answer",
+        "config": {
+          "name": "benchmark_answer",
+          "description": "Canonical math benchmark answer output",
+          "outputFormat": "text"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge-child-reasoning-peer-score-pick-cheap-aggregation-benchmark-answer",
+      "source": "child-reasoning-peer-score-pick-cheap",
+      "target": "aggregation-benchmark-answer"
+    },
+    {
+      "id": "edge-input-child",
+      "source": "input-prompt",
+      "target": "child-reasoning-peer-score-pick-cheap"
+    },
+    {
+      "id": "edge-aggregation-benchmark-answer-result-benchmark-answer",
+      "source": "aggregation-benchmark-answer",
+      "target": "result-benchmark-answer"
+    }
+  ],
+  "metadata": {
+    "tags": [
+      "benchmark",
+      "expensive",
+      "math-500",
+      "non-mcqa",
+      "parent",
+      "reasoning-peer-score-pick-cheap",
+      "wrapper"
+    ]
+  },
+  "optimize": {
+    "params": [
+      {
+        "path": "nodes[child-reasoning-peer-score-pick-cheap].data.config.childWorkflowId",
+        "type": "enum",
+        "candidates": [
+          "reasoning-informed-captain-synthesis-cheap",
+          "reasoning-judge-pick-cheap",
+          "reasoning-judge-score-pick-cheap",
+          "reasoning-peer-score-pick-cheap",
+          "reasoning-adversarial-defense-judge-pick-cheap",
+          "reasoning-majority-pick-cheap",
+          "reasoning-camp-split-judge-pick-cheap",
+          "reasoning-self-consistency-majority-pick-cheap",
+          "reasoning-multi-round-majority-pick-cheap"
+        ]
+      },
+      {
+        "path": "nodes[child-reasoning-peer-score-pick-cheap].data.config.inputTemplate.user_prompt",
+        "type": "prompt",
+        "group": "child_input_templates"
+      },
+      {
+        "path": "nodes[child-reasoning-peer-score-pick-cheap].data.config.timeoutSeconds",
+        "type": "int",
+        "range": {
+          "min": 120,
+          "max": 1800,
+          "step": 60
+        }
+      }
+    ],
+    "locked": [
+      "nodes[aggregation-benchmark-answer].data.config.aggregationMethod"
+    ],
+    "objectives": [
+      {
+        "metric": "accuracy",
+        "direction": "maximize",
+        "weight": 3
+      },
+      {
+        "metric": "cost_per_item",
+        "direction": "minimize",
+        "weight": 1
+      }
+    ],
+    "constraints": [
+      {
+        "metric": "cost_per_item",
+        "op": "<=",
+        "value": 0.05
+      },
+      {
+        "metric": "parse_rate",
+        "op": ">=",
+        "value": 0.95
+      }
+    ],
+    "stop_policy": {
+      "max_generations": 20,
+      "budget_usd": 10,
+      "plateau_generations": 5,
+      "stability_top_k": 3
+    },
+    "promotion_policy": {
+      "min_accuracy_gain": 0.02,
+      "require_generalization_check": true,
+      "no_regression_on": [
+        "parse_rate",
+        "cost_per_item"
+      ]
+    }
+  }
+}

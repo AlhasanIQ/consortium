@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reasoning Workflow Architecture — Consortium</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --panel-2: #1c2330;
+    --border: #2d3543;
+    --text: #d7dde6;
+    --muted: #8b97a7;
+    --accent: #6ea8fe;
+    --l0: #f0883e;
+    --l1: #56d364;
+    --l2: #d2a8ff;
+    --l3: #79c0ff;
+    --warn: #f85149;
+    --good: #3fb950;
+    --shadow: 0 8px 24px rgba(0,0,0,.4);
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: linear-gradient(180deg, #0a0d12 0%, var(--bg) 100%);
+    color: var(--text);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .layout { display: grid; grid-template-columns: 260px 1fr; max-width: 1400px; margin: 0 auto; }
+  /* Sidebar */
+  nav {
+    position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto;
+    padding: 28px 18px; border-right: 1px solid var(--border);
+    background: rgba(13,17,23,.6); backdrop-filter: blur(6px);
+  }
+  nav .brand { font-weight: 700; font-size: 14px; letter-spacing: .5px; color: var(--accent); text-transform: uppercase; margin-bottom: 4px; }
+  nav .sub { font-size: 12px; color: var(--muted); margin-bottom: 20px; }
+  nav a { display: block; color: var(--muted); text-decoration: none; font-size: 13.5px; padding: 5px 10px; border-radius: 6px; border-left: 2px solid transparent; }
+  nav a:hover { color: var(--text); background: var(--panel); }
+  nav a.indent { padding-left: 22px; font-size: 12.5px; }
+  nav .group { margin-top: 14px; font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: #5b6675; padding: 0 10px; }
+  main { padding: 48px 56px 120px; min-width: 0; }
+  /* Header */
+  header.hero { margin-bottom: 44px; }
+  header.hero h1 { font-size: 38px; line-height: 1.15; margin: 0 0 12px; background: linear-gradient(90deg, #fff, var(--accent)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  header.hero p { font-size: 17px; color: var(--muted); max-width: 720px; margin: 0; }
+  h2 { font-size: 26px; margin: 56px 0 18px; padding-bottom: 10px; border-bottom: 1px solid var(--border); scroll-margin-top: 20px; }
+  h3 { font-size: 19px; margin: 34px 0 12px; scroll-margin-top: 20px; }
+  p { margin: 12px 0; }
+  code { background: var(--panel-2); padding: 2px 6px; border-radius: 5px; font: 13.5px/1.4 "SF Mono", Menlo, Consolas, monospace; color: #ffa657; border: 1px solid var(--border); }
+  a.inline { color: var(--accent); }
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; margin: 18px 0; font-size: 14.5px; background: var(--panel); border-radius: 10px; overflow: hidden; box-shadow: var(--shadow); }
+  th, td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { background: var(--panel-2); font-size: 12.5px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); font-weight: 600; }
+  tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: rgba(110,168,254,.05); }
+  /* Callouts */
+  .why { background: var(--panel); border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; padding: 12px 16px; margin: 14px 0; font-size: 14.5px; }
+  .why b { color: var(--accent); }
+  .invariant { background: rgba(248,81,73,.07); border: 1px solid rgba(248,81,73,.3); border-left: 3px solid var(--warn); border-radius: 0 8px 8px 0; padding: 11px 16px; margin: 14px 0; font-size: 14px; }
+  .invariant b { color: #ff7b72; }
+  /* Layer stack diagram */
+  .stack { display: flex; flex-direction: column; gap: 10px; margin: 26px 0; }
+  .layer { display: grid; grid-template-columns: 92px 1fr; gap: 0; border-radius: 12px; overflow: hidden; border: 1px solid var(--border); box-shadow: var(--shadow); transition: transform .15s; }
+  .layer:hover { transform: translateX(6px); }
+  .layer .tag { display: flex; flex-direction: column; align-items: center; justify-content: center; font-weight: 800; font-size: 22px; color: #0d1117; }
+  .layer .tag small { font-size: 10px; font-weight: 700; letter-spacing: .5px; opacity: .8; }
+  .layer .body { padding: 14px 18px; background: var(--panel); }
+  .layer .body .title { font-weight: 600; font-size: 15px; }
+  .layer .body .title code { background: rgba(0,0,0,.3); }
+  .layer .body .desc { font-size: 13.5px; color: var(--muted); margin-top: 4px; }
+  .layer.x0 .tag { background: var(--l0); } .layer.x1 .tag { background: var(--l1); }
+  .layer.x2 .tag { background: var(--l2); } .layer.x3 .tag { background: var(--l3); }
+  /* Flow pipeline */
+  .flow { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 16px 0; font-size: 13px; }
+  .node { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 7px 12px; font-family: "SF Mono", Menlo, monospace; font-size: 12.5px; white-space: nowrap; }
+  .node.in { border-color: var(--l3); color: var(--l3); }
+  .node.child { border-color: var(--l1); color: var(--l1); }
+  .node.agg { border-color: var(--l0); color: var(--l0); }
+  .node.out { border-color: var(--accent); color: var(--accent); }
+  .arrow { color: var(--muted); font-size: 16px; }
+  /* Principle cards */
+  .principles { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px,1fr)); gap: 16px; margin: 24px 0; }
+  .pcard { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; box-shadow: var(--shadow); }
+  .pcard .num { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 8px; background: var(--accent); color: #0d1117; font-weight: 800; margin-bottom: 10px; }
+  .pcard h4 { margin: 0 0 8px; font-size: 16px; }
+  .pcard p { font-size: 13.5px; color: var(--muted); margin: 6px 0; }
+  /* Primitive cards */
+  .prim { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 22px 24px; margin: 20px 0; box-shadow: var(--shadow); }
+  .prim h3 { margin-top: 0; display: flex; align-items: center; gap: 12px; }
+  .prim h3 code { font-size: 16px; background: var(--panel-2); color: var(--l1); border-color: var(--l1); }
+  .pill { font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 20px; letter-spacing: .3px; white-space: nowrap; }
+  .pill.calls0 { background: rgba(63,185,80,.15); color: var(--good); border: 1px solid rgba(63,185,80,.4); }
+  .pill.calls1 { background: rgba(110,168,254,.15); color: var(--accent); border: 1px solid rgba(110,168,254,.4); }
+  .pill.callsN { background: rgba(240,136,62,.15); color: var(--l0); border: 1px solid rgba(240,136,62,.4); }
+  .pill.callsNN { background: rgba(248,81,73,.15); color: var(--warn); border: 1px solid rgba(248,81,73,.4); }
+  /* Call-budget visual (L1 agents + L0 aggregation = total) */
+  .budget { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 4px 0 16px; font-size: 12.5px; }
+  .budget .b { padding: 6px 11px; border-radius: 8px; font-weight: 600; border: 1px solid var(--border); white-space: nowrap; line-height: 1.2; }
+  .budget .b small { display: block; font-size: 9px; font-weight: 700; letter-spacing: .5px; opacity: .75; text-transform: uppercase; margin-top: 2px; }
+  .budget .b.l1 { background: rgba(86,211,100,.12); border-color: rgba(86,211,100,.4); color: var(--l1); }
+  .budget .b.l0 { background: rgba(240,136,62,.12); border-color: rgba(240,136,62,.4); color: var(--l0); }
+  .budget .b.tot { background: var(--panel-2); color: var(--text); }
+  .budget .op { color: var(--muted); font-weight: 700; font-size: 16px; }
+  /* L1 composition schematic */
+  .l1schema { display: flex; align-items: stretch; gap: 12px; flex-wrap: wrap; margin: 22px 0 10px; padding: 22px; background: var(--panel); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow); }
+  .l1schema .stage { flex: 1 1 0; min-width: 160px; border-radius: 12px; padding: 14px 16px; }
+  .l1schema .stage.l1 { background: rgba(86,211,100,.1); border: 1px solid rgba(86,211,100,.4); }
+  .l1schema .stage.l0 { background: rgba(240,136,62,.1); border: 1px solid rgba(240,136,62,.4); }
+  .l1schema .stage .tag { font-size: 10px; font-weight: 800; letter-spacing: .6px; text-transform: uppercase; margin-bottom: 6px; }
+  .l1schema .stage.l1 .tag { color: var(--l1); } .l1schema .stage.l0 .tag { color: var(--l0); }
+  .l1schema .stage .ttl { font-weight: 600; font-size: 14.5px; }
+  .l1schema .stage .sub { font-size: 11.5px; color: var(--muted); margin-top: 5px; line-height: 1.45; }
+  .l1schema .arrow2 { display: flex; align-items: center; font-size: 22px; color: var(--muted); font-weight: 700; }
+  /* L0-used badge on each primitive card */
+  .l0used { font-size: 12px; color: var(--muted); margin: -8px 0 14px; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+  .l0used .lbl { background: rgba(240,136,62,.15); color: var(--l0); border: 1px solid rgba(240,136,62,.45); border-radius: 5px; padding: 1px 7px; font-weight: 800; font-size: 10px; letter-spacing: .5px; }
+  .l0used code { background: var(--panel-2); border-color: rgba(240,136,62,.35); color: var(--l0); }
+  .prim .unique { font-size: 14px; }
+  .prim .unique b { color: var(--l1); }
+  /* Cost bar in method table */
+  .costbar { display: inline-block; width: 70px; height: 8px; border-radius: 4px; background: var(--panel-2); position: relative; vertical-align: middle; overflow: hidden; }
+  .costbar i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; }
+  .pitfall td:first-child { font-weight: 600; color: #ff9d96; }
+  footer { margin-top: 80px; padding-top: 24px; border-top: 1px solid var(--border); color: var(--muted); font-size: 13px; }
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr; }
+    nav { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--border); }
+    main { padding: 32px 22px 80px; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+  <nav>
+    <div class="brand">Consortium</div>
+    <div class="sub">Reasoning Workflow Architecture</div>
+    <a href="#layers">Four-Layer Structure</a>
+    <a href="#principles">Design Principles</a>
+    <a href="#composition">Model Composition</a>
+    <a href="#methods">Aggregation Methods</a>
+    <a href="#primitives">Workflow Primitives</a>
+    <div class="group">Primitives</div>
+    <a class="indent" href="#p-majority">majority-pick</a>
+    <a class="indent" href="#p-selfcons">self-consistency</a>
+    <a class="indent" href="#p-judge">judge-pick</a>
+    <a class="indent" href="#p-score">judge-score-pick</a>
+    <a class="indent" href="#p-peer">peer-score-pick</a>
+    <a class="indent" href="#p-captain">informed-captain</a>
+    <a class="indent" href="#p-adv">adversarial-defense</a>
+    <a class="indent" href="#p-camp">camp-split</a>
+    <a class="indent" href="#p-multi">multi-round</a>
+    <div class="group">Reference</div>
+    <a href="#decisions">Key Decisions</a>
+    <a href="#pitfalls">Tuning Pitfalls</a>
+  </nav>
+
+  <main>
+    <header class="hero">
+      <h1>Reasoning Workflow Architecture</h1>
+      <p>How Consortium's reasoning workflows are structured, why they're designed this way, and the principles behind each choice.</p>
+    </header>
+
+    <!-- ===================== LAYERS ===================== -->
+    <section id="layers">
+      <h2>Four-Layer Structure</h2>
+      <p>Reasoning workflows use a layered architecture that separates reusable aggregation, user-facing reasoning, composition, and benchmark-specific concerns. Each layer builds on the one below it:</p>
+
+      <div class="stack">
+        <div class="layer x3">
+          <div class="tag">L3<small>WRAPPERS</small></div>
+          <div class="body">
+            <div class="title">Benchmark wrappers — <code>benchmark-</code></div>
+            <div class="desc">Thin harness: calls an L1 child and adds benchmark-specific output contract (MCQA &amp; non-MCQA variants). e.g. <code>benchmark-informed-captain-synthesis</code></div>
+          </div>
+        </div>
+        <div class="layer x2">
+          <div class="tag">L2<small>COMPOSITES</small></div>
+          <div class="body">
+            <div class="title">Composites — <code>composite-</code></div>
+            <div class="desc">Orchestrate multiple L1 primitives. e.g. <code>composite-judge-synthesis-cheap</code></div>
+          </div>
+        </div>
+        <div class="layer x1">
+          <div class="tag">L1<small>PRODUCT</small></div>
+          <div class="body">
+            <div class="title">Primitives — <code>reasoning-</code></div>
+            <div class="desc">General-purpose reasoning strategies. Benchmark-agnostic, usable by any caller. <strong>This is the product</strong> — powers the Round Table UI, the API, and routing. e.g. <code>reasoning-judge-pick</code></div>
+          </div>
+        </div>
+        <div class="layer x0">
+          <div class="tag">L0<small>INTERNALS</small></div>
+          <div class="body">
+            <div class="title">Aggregation workflows — <code>aggregation-</code></div>
+            <div class="desc">Reusable aggregation internals: collection, extraction, judging, scoring, synthesis, peer review, selection. Builder/admin only; not shown in Ensemble. e.g. <code>aggregation-synthesis</code>, <code>aggregation-majority-vote</code>, <code>aggregation-peer-matrix</code></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="why"><b>Why four layers?</b> L0 aggregation workflows make method internals reusable and inspectable without turning them into user-facing products. The L1 primitives are the product. Benchmark wrappers are a testing concern only. Mixing benchmark-specific instructions (like "answer with a single letter") into the primitives would degrade them for general use — the wrapper layer keeps that separation clean.</div>
+
+      <h3>How wrappers wire up</h3>
+      <p><strong>MCQA L3 wrappers</strong> reduce the L1 output to a single option label:</p>
+      <div class="flow">
+        <span class="node in">input</span><span class="arrow">→</span>
+        <span class="node child">child_workflow (L1)</span><span class="arrow">→</span>
+        <span class="node agg">contract_extract</span><span class="arrow">→</span>
+        <span class="node out">result (collect)</span>
+      </div>
+      <p><strong>Non-MCQA wrappers</strong> (e.g. <code>benchmark-math-*-cheap</code>) are thinner — grading parses/evaluates expressions in the benchmark harness:</p>
+      <div class="flow">
+        <span class="node in">input</span><span class="arrow">→</span>
+        <span class="node child">child_workflow (L1)</span><span class="arrow">→</span>
+        <span class="node out">result (collect)</span>
+      </div>
+      <div class="invariant"><b>Rule:</b> Benchmarks must evaluate L1 workflows, not L0 aggregation workflows directly. L0 is implementation structure; L1 is the benchmarkable product behavior.</div>
+    </section>
+
+    <!-- ===================== PRINCIPLES ===================== -->
+    <section id="principles">
+      <h2>Design Principles</h2>
+      <div class="principles">
+        <div class="pcard">
+          <div class="num">1</div>
+          <h4>Blind Evaluation</h4>
+          <p>Aggregators that show responses to an LLM anonymize agent identities. Judge/scoring relabel responses with letters (A, B, C…); <code>debate_decide</code> instead groups answers into neutrally-named camps (CampAlpha…) kept distinct from option letters. Real IDs are remapped after the LLM responds.</p>
+          <p><b style="color:var(--accent)">Why:</b> LLMs favor familiar model names — a judge may prefer a response labeled "GPT-4" over an identical "Unknown Model". Anonymization eliminates this confound.</p>
+        </div>
+        <div class="pcard">
+          <div class="num">2</div>
+          <h4>Model Diversity Over Sampling</h4>
+          <p>Each workflow uses agents from different architectures (Gemini, Mimo, Grok) rather than one model many times at high temperature.</p>
+          <p><b style="color:var(--accent)">Why (Condorcet):</b> Ensemble accuracy improves when voters make <em>independent</em> errors. Duplicate models have perfectly correlated errors. Diversity is the primary source of variation, so temperature stays low.</p>
+        </div>
+        <div class="pcard">
+          <div class="num">3</div>
+          <h4>Evaluator Independence</h4>
+          <p>Evaluators should ideally differ from all answering agents. Full independence is a goal; tuned assignments may reuse a strong evaluator on cost/quality tradeoffs.</p>
+          <p><b style="color:var(--accent)">Why:</b> If the same model answers and judges, it's biased toward its own reasoning patterns. An independent evaluator assesses content on its merits.</p>
+        </div>
+        <div class="pcard">
+          <div class="num">4</div>
+          <h4>Dynamic Task-Specific Rubrics</h4>
+          <p>Scoring &amp; peer-matrix support <code>rubric_mode: "dynamic"</code> — an LLM generates a task-appropriate rubric from the question alone, before seeing answers.</p>
+          <p><b style="color:var(--accent)">Why:</b> A static rubric can't discriminate across task types. Adds one LLM call per aggregation (~15–25% cost), but aggregation is the cheapest part of the pipeline.</p>
+        </div>
+      </div>
+      <div class="invariant"><b>Exception (Principle 2):</b> <code>reasoning-self-consistency-majority-pick</code> intentionally uses a single model 3× at elevated temperature to capture <em>sampling diversity</em> — a valid, cheaper alternative when testing one strong model's consistency.</div>
+    </section>
+
+    <!-- ===================== COMPOSITION ===================== -->
+    <section id="composition">
+      <h2>Model Composition</h2>
+      <p>Both tiers select 3 agent models from different architectures and an evaluator model. Exact assignments are tuned through benchloop — examples below show current choices, not permanent fixtures.</p>
+
+      <h3>Standard Tier <span style="color:var(--muted);font-weight:400;font-size:14px">— maximize quality</span></h3>
+      <table>
+        <thead><tr><th>Role</th><th>Example</th><th>Selection criteria</th></tr></thead>
+        <tbody>
+          <tr><td>Agent 1</td><td><code>xiaomi/mimo-v2.5-pro</code></td><td rowspan="3" style="vertical-align:middle">Three distinct model architectures for maximum error independence</td></tr>
+          <tr><td>Agent 2</td><td><code>deepseek/deepseek-v4-pro</code></td></tr>
+          <tr><td>Agent 3</td><td><code>minimax/minimax-m3</code></td></tr>
+          <tr><td>Evaluator</td><td><code>deepseek/deepseek-v4-pro</code></td><td>Stronger model; independence preferred but tuned empirically</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Cheap Tier <span style="color:var(--muted);font-weight:400;font-size:14px">— maximize diversity at lowest cost</span></h3>
+      <table>
+        <thead><tr><th>Role</th><th>Example</th><th>Selection criteria</th></tr></thead>
+        <tbody>
+          <tr><td>Agent 1</td><td><code>xiaomi/mimo-v2.5</code></td><td rowspan="3" style="vertical-align:middle">Three distinct architectures from the cheapest available models</td></tr>
+          <tr><td>Agent 2</td><td><code>deepseek/deepseek-v4-flash</code></td></tr>
+          <tr><td>Agent 3</td><td><code>minimax/minimax-m3</code></td></tr>
+          <tr><td>Evaluator</td><td><code>deepseek/deepseek-v4-pro</code></td><td>Stronger evaluator for judge, scoring, synthesis, tie-breaks</td></tr>
+        </tbody>
+      </table>
+
+      <div class="why"><b>Debate (3 agents, 2 rounds):</b> Same 3-agent pool as other multi-model primitives. R1 answers independently; R2 defends and challenges. The judge follows the tier's evaluator selection at low reasoning effort.</div>
+    </section>
+
+    <!-- ===================== METHODS ===================== -->
+    <section id="methods">
+      <h2>Aggregation Method Selection</h2>
+      <p>When to use which method, with relative cost and the key tradeoff. <span style="color:var(--muted)">Bars show relative LLM-call cost.</span></p>
+      <div class="why"><b>Reading the LLM Calls column:</b> these counts are <b>aggregation-only</b> — the agents produce their answers in upstream nodes first (typically 3 calls), and each method then decides among those existing answers. A method showing "0–1" still sits on top of those 3 agent answers; the column is just what the aggregation step itself adds.</div>
+      <table>
+        <thead><tr><th>Method</th><th>LLM Calls <span style="font-weight:400;text-transform:none;letter-spacing:0">(agg&nbsp;only)</span></th><th style="width:90px">Cost</th><th>Best For</th><th>Key Tradeoff</th></tr></thead>
+        <tbody>
+          <tr><td><code>majority_vote</code></td><td>0–1†</td><td><span class="costbar"><i style="width:8%;background:var(--good)"></i></span></td><td>Discrete-answer tasks (MCQA, yes/no, classification)</td><td>Zero cost on a clear majority; needs extractable answers — a tie or no-extraction falls back to the configured tie-breaker (<code>synthesis</code> = 1 call, <code>first</code>/<code>error</code> = 0)</td></tr>
+          <tr><td><code>debate_decide</code></td><td>1 top-level <span style="color:var(--muted)">(+up to 2 branch jobs in preview)</span></td><td><span class="costbar"><i style="width:22%;background:var(--accent)"></i></span></td><td>Discrete answers with disagreement worth examining</td><td>Groups answer camps, can synthesize when no camps are extractable, and can select the agreed camp output; the compiled judge job remains visible and scheduled</td></tr>
+          <tr><td><code>judge</code></td><td>1* top-level <span style="color:var(--muted)">(+1 repair in preview)</span></td><td><span class="costbar"><i style="width:22%;background:var(--accent)"></i></span></td><td>Quick winner selection, open-ended tasks</td><td>Fast and cheap but single point of failure</td></tr>
+          <tr><td><code>synthesis</code></td><td>1</td><td><span class="costbar"><i style="width:30%;background:var(--accent)"></i></span></td><td>Unified answers combining insights from all agents</td><td>Output is new generated text, not any agent's original</td></tr>
+          <tr><td><code>scoring</code></td><td>N* <span style="color:var(--muted)">(+1‡)</span></td><td><span class="costbar"><i style="width:60%;background:var(--l0)"></i></span></td><td>Rubric-based evaluation where you want scores, not just a winner</td><td>More expensive; gives per-agent scores &amp; dynamic rubrics</td></tr>
+          <tr><td><code>peer_matrix</code></td><td>N×(N-1)* <span style="color:var(--muted)">(+1‡)</span></td><td><span class="costbar"><i style="width:100%;background:var(--warn)"></i></span></td><td>Evaluation by diverse evaluators (each agent's own model scores others)</td><td>Most expensive; true evaluator diversity via per-model routing</td></tr>
+          <tr><td><code>collect</code></td><td>0</td><td><span class="costbar"><i style="width:0%"></i></span></td><td>Concatenation only, no evaluation</td><td>No intelligence, just joins outputs</td></tr>
+        </tbody>
+      </table>
+      <p style="font-size:13px;color:var(--muted)"><code>*</code> When all agent answers are extractable and identical, compiled L0 workflows preserve a visible unanimous fallback selection so the agreed candidate output wins deterministically. Evaluator jobs remain part of the compiled DAG and visible in Builder expansion. Judge exposes a conditional repair prompt in Builder preview; <code>debate_decide</code> exposes both no-camps synthesis and repair branch jobs when configured. &nbsp;<code>†</code> <code>tie_breaker_method</code> is required config (no implicit default); the shipped <code>reasoning-majority-pick</code> seed uses <code>synthesis</code>. &nbsp;<code>‡</code> add one LLM call for rubric generation when <code>rubric_mode: "dynamic"</code> (once per aggregation, not per response).</p>
+
+      <div class="why"><b>Workflow Builder representation:</b> Aggregation can be authored as a visible <code>aggregation</code> node between answer producers and a presentation <code>result</code> node. Builder/seed workflows set <code>aggregationWorkflowId</code> to an L0 <code>aggregation-*</code> workflow; submit/conversion turns the macro into a compiled <code>workflow_ref</code> so internals execute as visible operation/prompt/result nodes in the parent frozen DAG. The L0 seed JSON is a descriptor and Fork template, not the execution source of truth; the backend compiler owns the compiled DAG used by execution and Expand. Upstream answer node IDs stay bound for candidate outputs and model inheritance — which matters for <code>peer_matrix</code>, where each reviewer model comes from the upstream node's <code>__model</code> context entry. Legacy result-owned aggregation remains valid for imported workflows without an L0 source.</div>
+
+      <div class="why"><b>Evaluator role by method:</b> Cognitive demand varies. <code>judge</code> reasons through competing argument chains. <code>scoring</code> assesses each response against criteria. <code>synthesis</code> understands, integrates, and generates new text. <code>debate_decide</code> judges answer camps while fallback nodes preserve deterministic consensus selection. <code>peer_matrix</code> distributes evaluation across models. Benchmark <code>contract_extract</code> nodes only regex-extract a letter — no LLM reasoning in the common case. Optimal settings are determined empirically through benchloop.</div>
+    </section>
+
+    <!-- ===================== PRIMITIVES ===================== -->
+    <section id="primitives">
+      <h2>Workflow Primitives</h2>
+      <p>Each L1 primitive captures a distinct reasoning strategy — a specific hypothesis about how multiple models (or samples) produce better answers than one. Together they cover the strategy space without redundancy: each exists because it tests something no other primitive tests. The <span style="color:#ff7b72">tuning invariants</span> mark what must be preserved so a primitive doesn't silently collapse into a different one.</p>
+
+      <div class="l1schema">
+        <div class="stage l1">
+          <div class="tag">L1 · Answer layer</div>
+          <div class="ttl">Agents answer</div>
+          <div class="sub">3 models (1 sample each), or 1 model ×3, or 2 rounds (6 calls). These are the primitive's own LLM calls.</div>
+        </div>
+        <div class="arrow2">→</div>
+        <div class="stage l0">
+          <div class="tag">L0 · Aggregation</div>
+          <div class="ttl">One method decides</div>
+          <div class="sub">vote · judge · score · peer · synthesis · debate_decide · collect. Adds 0 to N more calls.</div>
+        </div>
+        <div class="arrow2">→</div>
+        <div class="stage" style="flex:0 1 140px;background:var(--panel-2);border:1px solid var(--border);display:flex;flex-direction:column;justify-content:center">
+          <div class="tag" style="color:var(--accent)">Result</div>
+          <div class="ttl">Final output</div>
+        </div>
+      </div>
+      <p style="font-size:13px;color:var(--muted);margin-top:8px">Every L1 primitive composes an <span style="color:var(--l1)">L1 answer layer</span> with an <span style="color:var(--l0)">L0 aggregation method</span>. The <b>normal total LLM calls</b> on each card below = <span style="color:var(--l1)">L1 agent calls</span> + top-level <span style="color:var(--l0)">L0 aggregation calls</span>; Builder preview also shows conditional branches such as repair prompts.</p>
+
+      <!-- majority -->
+      <div class="prim" id="p-majority">
+        <h3><code>reasoning-majority-pick</code> <span class="pill calls1">3 calls total</span></h3>
+        <div class="budget"><span class="b l1">3 agents<small>L1 calls</small></span><span class="op">+</span><span class="b l0">0 aggregation<small>L0 calls</small></span><span class="op">=</span><span class="b tot">3 total</span><span class="op" style="font-size:12px">(tie → synthesis, +1)</span></div>
+        <div class="l0used"><span class="lbl">L0 USED</span> <code>majority_vote</code> method · workflow <code>aggregation-majority-vote</code></div>
+        <div class="flow">
+          <span class="node">3 agents (independent)</span><span class="arrow">→</span>
+          <span class="node">extract answers</span><span class="arrow">→</span>
+          <span class="node agg">count / majority_vote</span>
+        </div>
+        <p class="unique">Multiple models answer independently; answers are extracted and counted — no LLM evaluates anything. If each model is independently more likely right than wrong, the majority is more reliable than any individual (Condorcet).</p>
+        <p class="unique"><b>What makes it unique:</b> Zero-cost aggregation. The baseline — isolates whether multi-model diversity alone improves accuracy, without any evaluation intelligence.</p>
+        <div class="invariant"><b>Tuning invariant:</b> Aggregation must stay purely mechanical (extraction + counting). Adding LLM reasoning would make this a more expensive judge.</div>
+      </div>
+
+      <!-- self consistency -->
+      <div class="prim" id="p-selfcons">
+        <h3><code>reasoning-self-consistency-majority-pick</code> <span class="pill calls1">3 calls total</span></h3>
+        <div class="budget"><span class="b l1">3 samples<small>L1 calls · 1 model ×3</small></span><span class="op">+</span><span class="b l0">0 aggregation<small>L0 calls</small></span><span class="op">=</span><span class="b tot">3 total</span><span class="op" style="font-size:12px">(tie → synthesis, +1)</span></div>
+        <div class="l0used"><span class="lbl">L0 USED</span> <code>majority_vote</code> method · workflow <code>aggregation-majority-vote</code></div>
+        <div class="flow">
+          <span class="node">1 model × 3 samples (high temp)</span><span class="arrow">→</span>
+          <span class="node">extract answers</span><span class="arrow">→</span>
+          <span class="node agg">majority_vote</span>
+        </div>
+        <p class="unique">One model answers the same question three times at higher temperature, producing different reasoning paths. Reaching the same answer through different routes means high confidence.</p>
+        <p class="unique"><b>What makes it unique:</b> The only single-model primitive. Tests whether one model's internal variance suffices — different reasoning paths from the same weights — rather than multiple architectures.</p>
+        <div class="invariant"><b>Tuning invariant:</b> Must use a single model. Temperature high enough for genuinely different paths. Multiple models makes this vote; too-low temperature makes all samples identical.</div>
+      </div>
+
+      <!-- judge -->
+      <div class="prim" id="p-judge">
+        <h3><code>reasoning-judge-pick</code> <span class="pill calls1">4 normal · 5 preview</span></h3>
+        <div class="budget"><span class="b l1">3 agents<small>L1 calls</small></span><span class="op">+</span><span class="b l0">1 top-level aggregation<small>L0 call</small></span><span class="op">=</span><span class="b tot">4 normal</span><span class="op" style="font-size:12px">(+1 repair in preview)</span></div>
+        <div class="l0used"><span class="lbl">L0 USED</span> <code>judge</code> method · workflow <code>aggregation-judge</code></div>
+        <div class="flow">
+          <span class="node">3 agents (independent)</span><span class="arrow">→</span>
+          <span class="node agg">judge selects winner</span>
+        </div>
+        <p class="unique">Multiple models answer independently. One independent evaluator reads all responses and picks the best, assessing the full reasoning chain — not just the final answer. The unanimous fallback can select the agreed output, but the judge job remains visible and scheduled.</p>
+        <p class="unique"><b>What makes it unique:</b> Cheapest LLM-based evaluation. A single evaluator catches logical errors, unjustified leaps, and self-contradictions that pure extraction misses. A well-reasoned minority can beat a poorly-reasoned majority.</p>
+        <div class="invariant"><b>Tuning invariant:</b> The judge must evaluate reasoning quality, not default to the majority answer. A judge that always picks the most common answer is a more expensive vote.</div>
+      </div>
+
+      <!-- score -->
+      <div class="prim" id="p-score">
+        <h3><code>reasoning-judge-score-pick</code> <span class="pill callsN">6 static · 7 dynamic</span></h3>
+        <div class="budget"><span class="b l1">3 agents<small>L1 calls</small></span><span class="op">+</span><span class="b l0">N aggregation<small>L0 calls · N=3</small></span><span class="op">=</span><span class="b tot">6 static / 7 dynamic</span></div>
+        <div class="l0used"><span class="lbl">L0 USED</span> <code>scoring</code> method · workflow <code>aggregation-scoring</code></div>
+        <div class="flow">
+          <span class="node">3 agents (independent)</span><span class="arrow">→</span>
+          <span class="node agg">scorer rates each vs rubric</span>
+        </div>
+        <p class="unique">Each response is scored against defined criteria (accuracy, completeness, clarity), producing per-response score profiles rather than just a winner. A unanimous fallback keeps consensus deterministic while scorer jobs remain visible and scheduled.</p>
+        <p class="unique"><b>What makes it unique:</b> The only primitive that produces per-criteria scores. You learn not just <em>which</em> response is best, but <em>why</em> and on which dimensions. Supports dynamic rubrics.</p>
+        <div class="invariant"><b>Tuning invariant:</b> Each response scored independently against criteria, not compared to others (that's judge). Collapsing to one "is this right?" dimension makes this a more expensive vote.</div>
+      </div>
+
+      <!-- peer -->
+      <div class="prim" id="p-peer">
+        <h3><code>reasoning-peer-score-pick</code> <span class="pill callsNN">9 static · 10 dynamic</span></h3>
+        <div class="budget"><span class="b l1">3 agents<small>L1 calls</small></span><span class="op">+</span><span class="b l0">N×(N-1) aggregation<small>L0 calls · 6 peer evals</small></span><span class="op">=</span><span class="b tot">9 static / 10 dynamic</span></div>
+        <div class="l0used"><span class="lbl">L0 USED</span> <code>peer_matrix</code> method · workflow <code>aggregation-peer-matrix</code></div>
+        <div class="flow">
+          <span class="node">3 agents (independent)</span><span class="arrow">→</span>
+          <span class="node agg">each agent's model scores the others</span><span class="arrow">→</span>
+          <span class="node">aggregate scores</span>
+        </div>
+        <p class="unique">Each agent's underlying model evaluates the other agents' responses, routed to the reviewing agent's own model — true evaluator diversity, not just redundancy. Evaluators are blind and do not see their own response.</p>
+        <p class="unique"><b>What makes it unique:</b> The only primitive with multiple evaluator perspectives. The same diverse models that answered also evaluate each other — different models catch different flaws.</p>
+        <p class="unique"><b>Model routing:</b> Each agent's model is propagated via <code>__model</code> keys. Routing is strict: each reviewer must have a model configured. A separate <code>rubric_model</code> controls dynamic rubric generation (required when <code>rubric_mode</code> is dynamic), and dynamic prompts must include <code>{{rubric}}</code>.</p>
+        <p class="unique"><b>Per-criterion scoring:</b> Each peer evaluation returns per-criterion reasoning and scores. The weighted total is computed deterministically from rubric weights — not estimated by the LLM. Fallback parsing supports legacy single-score format.</p>
+        <div class="invariant"><b>Tuning invariant:</b> Each agent's model must evaluate independently and must not see its own response. Routing all evaluations through a single model would make this a more expensive scored.</div>
+      </div>
+
+      <!-- captain -->
+      <div class="prim" id="p-captain">
+        <h3><code>reasoning-informed-captain-synthesis</code> <span class="pill calls1">4 calls total</span></h3>
+        <div class="budget"><span class="b l1">3 agents<small>L1 calls</small></span><span class="op">+</span><span class="b l0">1 aggregation<small>L0 call · synthesis</small></span><span class="op">=</span><span class="b tot">4 total</span></div>
+        <div class="l0used"><span class="lbl">L0 USED</span> <code>synthesis</code> method · workflow <code>aggregation-synthesis</code></div>
+        <div class="flow">
+          <span class="node">3 agents (independent)</span><span class="arrow">→</span>
+          <span class="node agg">synthesizer generates NEW text</span>
+        </div>
+        <p class="unique">A synthesizer reads all responses and creates a new, unified answer combining the best insights from each. The output is new text, not any agent's original response.</p>
+        <p class="unique"><b>What makes it unique:</b> The only primitive where aggregation creates new content. Every other primitive selects, scores, or counts existing responses. Synthesis merges complementary strengths — one agent's structure with another's insight.</p>
+        <div class="invariant"><b>Tuning invariant:</b> The synthesizer must produce new text integrating multiple responses. If the prompt tells it to pick the best/majority answer, it becomes a more expensive judge.</div>
+      </div>
+
+      <!-- adversarial -->
+      <div class="prim" id="p-adv">
+        <h3><code>reasoning-adversarial-defense-judge-pick</code> <span class="pill callsN">7 normal · 8 preview</span></h3>
+        <div class="budget"><span class="b l1">6 agents<small>L1 calls · 3 R1 + 3 R2</small></span><span class="op">+</span><span class="b l0">1 top-level judge<small>L0 call</small></span><span class="op">=</span><span class="b tot">7 normal</span><span class="op" style="font-size:12px">(+1 repair in preview)</span></div>
+        <div class="l0used"><span class="lbl">L0 USED</span> <code>judge</code> method · workflow <code>aggregation-judge</code></div>
+        <div class="flow">
+          <span class="node">R1: 3 agents (independent)</span><span class="arrow">→</span>
+          <span class="node">R2: 3 agents defend + attack</span><span class="arrow">→</span>
+          <span class="node agg">judge decides</span>
+        </div>
+        <p class="unique">R1: three models answer independently. R2: each agent sees the others and must defend its own position while challenging the rest — citing specific errors, unsupported claims, logical gaps. A judge evaluates the defenses and picks the winner.</p>
+        <p class="unique"><b>What makes it unique:</b> The only primitive with adversarial pressure after independent answering, and <b>the only one with a genuine multi-round exchange between agents.</b> Unlike deliberation (encourages convergence), debate encourages divergence — surfacing objections convergent discussion would paper over. A defense that withstands challenge signals high confidence. <span style="color:var(--muted)">(Don't confuse this with the <code>debate_decide</code> aggregation method below — that one has no live exchange.)</span></p>
+        <div class="invariant"><b>Tuning invariant:</b> R1 must be independent. R2 must be adversarial (defend + challenge). If R2 asks agents to "reconsider," this becomes deliberation. If R2 is removed, it's a more expensive judge.</div>
+      </div>
+
+      <!-- camp -->
+      <div class="prim" id="p-camp">
+        <h3><code>reasoning-camp-split-judge-pick</code> <span class="pill calls1">4 normal · 5 preview</span></h3>
+        <div class="budget"><span class="b l1">3 agents<small>L1 · the debate</small></span><span class="op">+</span><span class="b l0">1 top-level debate_decide<small>L0 verdict</small></span><span class="op">=</span><span class="b tot">4 normal</span><span class="op" style="font-size:12px">(+2 branch jobs in preview)</span></div>
+        <div class="l0used"><span class="lbl">L0 USED</span> <code>debate_decide</code> method · workflow <code>aggregation-debate-decide</code></div>
+        <div class="flow">
+          <span class="node">3 agents (independent)</span><span class="arrow">→</span>
+          <span class="node">group by answer into camps</span><span class="arrow">→</span>
+          <span class="node agg">judge decides between camps</span>
+        </div>
+        <p class="unique">Responses are grouped by extracted answer into "camps." If all agree, the fallback selection makes that agreed answer win deterministically. On disagreement, a judge evaluates the competing positions — seeing each camp's collected reasoning, not individual responses. If no agent yields an extractable answer (e.g. free-form math), aggregation delegates to a synthesis call instead.</p>
+        <div class="why"><b>The debate lives at L1; the verdict is L0.</b> The three <span style="color:var(--l1)">L1 agents</span> generate the competing positions — grouped by answer into opposing camps — and that <em>is</em> the debate. The <code>debate_decide</code> aggregation call renders the verdict over those camps. So the debate is the 3 agent calls (decided in a single pass — agents don't rebut each other across rounds). For a multi-round back-and-forth exchange, see <code>reasoning-adversarial-defense-judge-pick</code> above.</div>
+        <p class="unique"><b>What makes it unique:</b> Combines independent answering with structured disagreement analysis. The judge evaluates <em>positions with supporting arguments</em> rather than individual responses. The unanimous fallback keeps consensus deterministic while the compiled judge job remains visible for faithful DAG preview.</p>
+        <div class="invariant"><b>Tuning invariant:</b> Agents answer independently (not knowing about camps). The judge must be able to override the majority camp if the minority's reasoning is stronger — always picking the larger camp is a more expensive vote.</div>
+      </div>
+
+      <!-- multi round -->
+      <div class="prim" id="p-multi">
+        <h3><code>reasoning-multi-round-majority-pick</code> <span class="pill callsN">6 calls total</span></h3>
+        <div class="budget"><span class="b l1">6 agents<small>L1 calls · 3 R1 + 3 R2</small></span><span class="op">+</span><span class="b l0">0 aggregation<small>L0 calls</small></span><span class="op">=</span><span class="b tot">6 total</span><span class="op" style="font-size:12px">(tie → synthesis, +1)</span></div>
+        <div class="l0used"><span class="lbl">L0 USED</span> <code>majority_vote</code> method · workflow <code>aggregation-majority-vote</code></div>
+        <div class="flow">
+          <span class="node">R1: 3 agents (independent)</span><span class="arrow">→</span>
+          <span class="node">R2: each sees others, revises</span><span class="arrow">→</span>
+          <span class="node agg">majority_vote</span>
+        </div>
+        <p class="unique">Two rounds. R1: agents answer independently. R2: each agent sees the others' R1 answers and may revise. Final answers come from majority vote on R2 responses.</p>
+        <p class="unique"><b>What makes it unique:</b> The only multi-round primitive. Agents can change their minds after seeing peer reasoning. Holding a position after counterarguments signals high confidence; switching means a flaw was found.</p>
+        <div class="invariant"><b>Tuning invariant:</b> R1 independent. R2 must show each agent the others' R1 responses and allow revision. Without peer exposure in R2, this is vote at double cost. Forcing convergence loses the signal from agents that hold position.</div>
+      </div>
+    </section>
+
+    <!-- ===================== DECISIONS ===================== -->
+    <section id="decisions">
+      <h2>Key Design Decisions</h2>
+      <table>
+        <thead><tr><th>Decision</th><th>Choice</th><th>Why</th></tr></thead>
+        <tbody>
+          <tr><td>Agent temperature</td><td>Low (tuned via benchloop)</td><td>Model diversity is the primary source of variation</td></tr>
+          <tr><td>Aggregator temperature</td><td>Tuned per method</td><td>Different aggregation tasks benefit from different temperature profiles</td></tr>
+          <tr><td>Aggregator reasoning effort</td><td>Tuned per method</td><td>Different aggregation tasks have different cognitive demands</td></tr>
+          <tr><td>Blind evaluation</td><td>Always on, unconditional</td><td>Eliminates model-name bias; no reason to ever expose names</td></tr>
+          <tr><td>Peer-matrix evaluation</td><td>Truly blind — reviewers don't see own answer</td><td>Consistent with blind evaluation; eliminates anchoring to own reasoning</td></tr>
+          <tr><td>Default normalization</td><td><code>"none"</code> (no centering)</td><td>Centering by reviewer corrected a bias that doesn't exist when all evals go through one model</td></tr>
+          <tr><td>Judge/debate parse-failure fallback</td><td>Repair call → fail (triggers retry)</td><td>Silent fallback (first-agent/largest-camp) systematically biases results; explicit failure gives retry a clean signal</td></tr>
+          <tr><td>Scoring parse failure</td><td>Return 0.0 + metadata flag</td><td>Returning midpoint (5.0) hides evaluator failures with passing grades</td></tr>
+          <tr><td>System prompts</td><td>Structured reasoning on agents; MCQA formatting in wrappers only</td><td>General prompts belong in primitives; benchmark-specific instructions belong in wrappers</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- ===================== PITFALLS ===================== -->
+    <section id="pitfalls">
+      <h2>Tuning Pitfalls</h2>
+      <p>Known failure modes that silently degrade a primitive into something it's not. Each has happened or was caught during review — they are easy to introduce accidentally.</p>
+      <table class="pitfall">
+        <thead><tr><th style="width:28%">Pitfall</th><th>What happens</th><th>How it looks in practice</th></tr></thead>
+        <tbody>
+          <tr><td>Synthesis prompt picks the majority</td><td>Collapses into a more expensive vote</td><td>"if responses disagree, choose the majority answer"</td></tr>
+          <tr><td>Judge defaults to popular answer</td><td>Collapses into a more expensive vote</td><td>"consider which answer most agents agree on"</td></tr>
+          <tr><td>Peer-review routes through one model</td><td>Collapses into more expensive scored</td><td>All peer evals sent to a single model instead of each agent's own</td></tr>
+          <tr><td>Reviewer sees own answer</td><td>Anchoring bias — defends rather than evaluates</td><td>"Your answer was: …" or "Compare against your own reasoning"</td></tr>
+          <tr><td>Benchmark instructions in primitives</td><td>L1/L3 separation breaks; primitives degrade</td><td>Adding "respond with a single letter A-E" to a primitive's agent prompt</td></tr>
+          <tr><td>Self-consistency uses multiple models</td><td>Becomes vote, losing the single-model signal</td><td>Using different architectures instead of one model 3×</td></tr>
+          <tr><td>Deliberation R2 has no peer context</td><td>Becomes vote at double the cost</td><td>R2 prompt doesn't include other agents' R1 responses</td></tr>
+          <tr><td>Camp-debate judge always picks majority</td><td>Becomes a more expensive vote</td><td>Judge prompt weighs camp size instead of reasoning quality</td></tr>
+          <tr><td>Debate R2 encourages convergence</td><td>Becomes deliberation</td><td>R2 says "reconsider" / "update" instead of "defend and challenge"</td></tr>
+          <tr><td>Low temperature on self-consistency</td><td>All samples return identical reasoning</td><td>Temperature near 0 produces trivially identical outputs</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <footer>
+      Generated from <code>docs/reasoning-architecture.md</code> · Consortium reasoning workflow architecture · 2026-06-23
+    </footer>
+  </main>
+</div>
+</body>
+</html>

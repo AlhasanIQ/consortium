@@ -1,0 +1,613 @@
+{
+  "created_at": "2024-01-01T00:00:00Z",
+  "description": "Adversarial defense reasoning workflow — 3 models answer independently (R1), then each defends its position and challenges the others (R2), judge picks the strongest defense",
+  "edges": [
+    {
+      "id": "edge-input-prompt-r1-deepseek-flash",
+      "source": "input-prompt",
+      "target": "r1-deepseek-flash"
+    },
+    {
+      "id": "edge-input-prompt-r1-minimax",
+      "source": "input-prompt",
+      "target": "r1-minimax"
+    },
+    {
+      "id": "edge-input-prompt-r1-mimo",
+      "source": "input-prompt",
+      "target": "r1-mimo"
+    },
+    {
+      "id": "edge-r1-deepseek-flash-r2-deepseek-flash",
+      "source": "r1-deepseek-flash",
+      "target": "r2-deepseek-flash"
+    },
+    {
+      "id": "edge-r1-minimax-r2-deepseek-flash",
+      "source": "r1-minimax",
+      "target": "r2-deepseek-flash"
+    },
+    {
+      "id": "edge-r1-mimo-r2-deepseek-flash",
+      "source": "r1-mimo",
+      "target": "r2-deepseek-flash"
+    },
+    {
+      "id": "edge-r1-deepseek-flash-r2-minimax",
+      "source": "r1-deepseek-flash",
+      "target": "r2-minimax"
+    },
+    {
+      "id": "edge-r1-minimax-r2-minimax",
+      "source": "r1-minimax",
+      "target": "r2-minimax"
+    },
+    {
+      "id": "edge-r1-mimo-r2-minimax",
+      "source": "r1-mimo",
+      "target": "r2-minimax"
+    },
+    {
+      "id": "edge-r1-deepseek-flash-r2-mimo",
+      "source": "r1-deepseek-flash",
+      "target": "r2-mimo"
+    },
+    {
+      "id": "edge-r1-minimax-r2-mimo",
+      "source": "r1-minimax",
+      "target": "r2-mimo"
+    },
+    {
+      "id": "edge-r1-mimo-r2-mimo",
+      "source": "r1-mimo",
+      "target": "r2-mimo"
+    },
+    {
+      "id": "edge-r2-deepseek-flash-aggregation-judgment",
+      "source": "r2-deepseek-flash",
+      "target": "aggregation-judgment"
+    },
+    {
+      "id": "edge-r2-minimax-aggregation-judgment",
+      "source": "r2-minimax",
+      "target": "aggregation-judgment"
+    },
+    {
+      "id": "edge-r2-mimo-aggregation-judgment",
+      "source": "r2-mimo",
+      "target": "aggregation-judgment"
+    },
+    {
+      "id": "edge-aggregation-judgment-result-judgment",
+      "source": "aggregation-judgment",
+      "target": "result-judgment"
+    }
+  ],
+  "id": "reasoning-adversarial-defense-judge-pick-cheap",
+  "metadata": {
+    "tags": [
+      "adversarial",
+      "debate",
+      "judge",
+      "multi-model",
+      "multi-round",
+      "reasoning"
+    ]
+  },
+  "name": "Adversarial Defense Judge Pick (Cheap)",
+  "nodes": [
+    {
+      "data": {
+        "config": {
+          "description": "The question or topic for adversarial debate",
+          "maxTokens": -1,
+          "name": "user_prompt",
+          "schema": {
+            "user_prompt": {
+              "required": true,
+              "type": "string"
+            }
+          }
+        },
+        "label": "User Prompt",
+        "type": "input"
+      },
+      "id": "input-prompt",
+      "position": {
+        "x": 1154,
+        "y": 80
+      },
+      "type": "input"
+    },
+    {
+      "data": {
+        "config": {
+          "maxTokens": -1,
+          "model": "deepseek/deepseek-v4-flash",
+          "name": "DeepSeek V4 Flash",
+          "openRouterReasoning": {
+            "effort": "high"
+          },
+          "provider": "openrouter",
+          "systemPrompt": "You are an expert problem solver. Think through problems carefully:\n1. Identify what is being asked\n2. Consider the key facts and evidence\n3. Reason step by step through the problem\n4. Check your reasoning for errors or gaps\n5. State your final answer clearly\n\nBe precise and thorough. If you are uncertain, explain why.",
+          "temperature": 0,
+          "timeoutSeconds": 180,
+          "userPrompt": "{{user_prompt}}",
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000
+          }
+        },
+        "label": "DeepSeek V4 Flash",
+        "type": "agent"
+      },
+      "id": "r1-deepseek-flash",
+      "position": {
+        "x": 1908,
+        "y": 370
+      },
+      "type": "agent"
+    },
+    {
+      "data": {
+        "config": {
+          "maxTokens": -1,
+          "model": "minimax/minimax-m3",
+          "name": "MiniMax M3",
+          "openRouterReasoning": {
+            "effort": "high"
+          },
+          "provider": "openrouter",
+          "systemPrompt": "You are an expert problem solver. Think through problems carefully:\n1. Identify what is being asked\n2. Consider the key facts and evidence\n3. Reason step by step through the problem\n4. Check your reasoning for errors or gaps\n5. State your final answer clearly\n\nBe precise and thorough. If you are uncertain, explain why.",
+          "temperature": 0,
+          "timeoutSeconds": 180,
+          "userPrompt": "{{user_prompt}}",
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000,
+            "adaptive_reasoning": {
+              "trigger_error_codes": [
+                "OUTPUT_TRUNCATED_EMPTY",
+                "TIMEOUT"
+              ],
+              "activate_after_consecutive": 2,
+              "ladder": [
+                "high",
+                "medium",
+                "low"
+              ]
+            }
+          }
+        },
+        "label": "MiniMax M3",
+        "type": "agent"
+      },
+      "id": "r1-minimax",
+      "position": {
+        "x": 120,
+        "y": 370
+      },
+      "type": "agent"
+    },
+    {
+      "data": {
+        "config": {
+          "maxTokens": -1,
+          "model": "xiaomi/mimo-v2.5",
+          "name": "MiMo V2.5",
+          "openRouterReasoning": {
+            "effort": "high"
+          },
+          "provider": "openrouter",
+          "systemPrompt": "You are an expert problem solver. Think through problems carefully:\n1. Identify what is being asked\n2. Consider the key facts and evidence\n3. Reason step by step through the problem\n4. Check your reasoning for errors or gaps\n5. State your final answer clearly\n\nBe precise and thorough. If you are uncertain, explain why.",
+          "temperature": 0,
+          "timeoutSeconds": 180,
+          "userPrompt": "{{user_prompt}}",
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000
+          }
+        },
+        "label": "MiMo V2.5",
+        "type": "agent"
+      },
+      "id": "r1-mimo",
+      "position": {
+        "x": 1014,
+        "y": 370
+      },
+      "type": "agent"
+    },
+    {
+      "data": {
+        "config": {
+          "maxTokens": -1,
+          "model": "deepseek/deepseek-v4-flash",
+          "name": "DeepSeek V4 Flash",
+          "openRouterReasoning": {
+            "effort": "high"
+          },
+          "provider": "openrouter",
+          "systemPrompt": "You previously answered a question. Now you will see other experts' responses.\n\nYour task is to DEFEND your original position and CHALLENGE the other responses:\n1. Identify specific errors, unsupported claims, or logical gaps in other responses\n2. Explain why your reasoning is stronger on each point of disagreement\n3. If others reached the same conclusion, reinforce the shared reasoning with additional evidence\n4. Only revise your position if you discover a genuine error in your own reasoning\n\nBe specific in your challenges — cite the exact claims you disagree with and explain why they are wrong.\n\nDo not answer with a camp label.\n\nEnd your response with your final answer on its own line in this exact format:\nFinal answer: <your answer>",
+          "temperature": 0,
+          "timeoutSeconds": 180,
+          "userPrompt": "Original question:\n{{user_prompt}}\n\nYour previous answer:\n{{r1-deepseek-flash}}\n\n--- Expert Response A ---\n{{r1-minimax}}\n\n--- Expert Response B ---\n{{r1-mimo}}\n\nDefend your position and challenge any errors in the other responses.\n\nEnd with your final answer on its own line:\nFinal answer: <your answer>",
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000
+          }
+        },
+        "label": "DeepSeek V4 Flash",
+        "type": "agent"
+      },
+      "id": "r2-deepseek-flash",
+      "position": {
+        "x": 1610,
+        "y": 720
+      },
+      "type": "agent"
+    },
+    {
+      "data": {
+        "config": {
+          "maxTokens": -1,
+          "model": "minimax/minimax-m3",
+          "name": "MiniMax M3",
+          "openRouterReasoning": {
+            "effort": "high"
+          },
+          "provider": "openrouter",
+          "systemPrompt": "You previously answered a question. Now you will see other experts' responses.\n\nYour task is to DEFEND your original position and CHALLENGE the other responses:\n1. Identify specific errors, unsupported claims, or logical gaps in other responses\n2. Explain why your reasoning is stronger on each point of disagreement\n3. If others reached the same conclusion, reinforce the shared reasoning with additional evidence\n4. Only revise your position if you discover a genuine error in your own reasoning\n\nBe specific in your challenges — cite the exact claims you disagree with and explain why they are wrong.\n\nDo not answer with a camp label.\n\nEnd your response with your final answer on its own line in this exact format:\nFinal answer: <your answer>",
+          "temperature": 0,
+          "timeoutSeconds": 180,
+          "userPrompt": "Original question:\n{{user_prompt}}\n\nYour previous answer:\n{{r1-minimax}}\n\n--- Expert Response A ---\n{{r1-deepseek-flash}}\n\n--- Expert Response B ---\n{{r1-mimo}}\n\nDefend your position and challenge any errors in the other responses.\n\nEnd with your final answer on its own line:\nFinal answer: <your answer>",
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000,
+            "adaptive_reasoning": {
+              "trigger_error_codes": [
+                "OUTPUT_TRUNCATED_EMPTY",
+                "TIMEOUT"
+              ],
+              "activate_after_consecutive": 2,
+              "ladder": [
+                "high",
+                "medium",
+                "low"
+              ]
+            }
+          }
+        },
+        "label": "MiniMax M3",
+        "type": "agent"
+      },
+      "id": "r2-minimax",
+      "position": {
+        "x": 418,
+        "y": 720
+      },
+      "type": "agent"
+    },
+    {
+      "data": {
+        "config": {
+          "maxTokens": -1,
+          "model": "xiaomi/mimo-v2.5",
+          "name": "MiMo V2.5",
+          "openRouterReasoning": {
+            "effort": "high"
+          },
+          "provider": "openrouter",
+          "systemPrompt": "You previously answered a question. Now you will see other experts' responses.\n\nYour task is to DEFEND your original position and CHALLENGE the other responses:\n1. Identify specific errors, unsupported claims, or logical gaps in other responses\n2. Explain why your reasoning is stronger on each point of disagreement\n3. If others reached the same conclusion, reinforce the shared reasoning with additional evidence\n4. Only revise your position if you discover a genuine error in your own reasoning\n\nBe specific in your challenges — cite the exact claims you disagree with and explain why they are wrong.\n\nDo not answer with a camp label.\n\nEnd your response with your final answer on its own line in this exact format:\nFinal answer: <your answer>",
+          "temperature": 0,
+          "timeoutSeconds": 180,
+          "userPrompt": "Original question:\n{{user_prompt}}\n\nYour previous answer:\n{{r1-mimo}}\n\n--- Expert Response A ---\n{{r1-deepseek-flash}}\n\n--- Expert Response B ---\n{{r1-minimax}}\n\nDefend your position and challenge any errors in the other responses.\n\nEnd with your final answer on its own line:\nFinal answer: <your answer>",
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000
+          }
+        },
+        "label": "MiMo V2.5",
+        "type": "agent"
+      },
+      "id": "r2-mimo",
+      "position": {
+        "x": 1014,
+        "y": 720
+      },
+      "type": "agent"
+    },
+    {
+      "id": "aggregation-judgment",
+      "type": "aggregation",
+      "position": {
+        "x": 1104,
+        "y": 1070
+      },
+      "data": {
+        "type": "aggregation",
+        "label": "Judge Decision Aggregation",
+        "config": {
+          "name": "Judge Decision Aggregation",
+          "description": "The judge's evaluation and winner selection from adversarial defenses",
+          "aggregationMethod": "judge",
+          "aggregationConfig": {
+            "judge_model": "deepseek/deepseek-v4-pro",
+            "max_tokens": -1,
+            "extraction_strategy": "regex",
+            "extraction_pattern": "(?im)(?:^|\\n|[^\\n]{0,60}\\b)(?:final answer|answer)\\s*(?:(?:is)?\\s*[:\\-]\\s*(?:\\(?([A-Z])\\)?\\s*(?:[.)]?\\s*$|\\s+(?:is|was|are|because|since|as|therefore|so)\\b)|\\(?([^\\n)]{1,80}?)\\)?\\s*(?:[.;]\\s*$|$|\\n|[.;]\\s+(?:because|since|as|this|the|it)\\b|,?\\s+(?:because|since|as|therefore|so)\\b))|is\\s*:?\\s*(?:\\(?([A-Z])\\)?\\s*(?:[.)]?\\s*$|\\s+(?:is|was|are|because|since|as|therefore|so)\\b)|([-+]?(?:\\d+(?:\\.\\d+)?|[A-Z]\\s*=\\s*[-+]?\\d+(?:\\.\\d+)?))\\s*(?:[.;]?\\s*$|,?\\s+(?:because|since|as|therefore|so)\\b)))",
+            "repair_max_tokens": 256,
+            "openRouterReasoning": {
+              "effort": "low"
+            },
+            "prompt": "Original Question: {{prompt}}\n\n{{responses}}\n\nAnalyze each defense and select the one with the strongest overall position.",
+            "system_prompt": "You are an impartial judge evaluating adversarial defense arguments. Multiple experts answered a question independently, then each defended their position and challenged the others.\n\nEvaluate each defense based on:\n1. Strength of evidence and reasoning in the defense\n2. Quality of challenges to opposing positions — specific errors identified vs vague objections\n3. Logical coherence under adversarial pressure\n4. Whether the expert addressed counterarguments effectively\n\nAfter your analysis, you MUST end your response with exactly one line in this format:\nWINNER: [letter]\n\nWhere [letter] is the label of the response with the strongest defense (e.g., A, B, C).",
+            "temperature": 0
+          },
+          "timeoutSeconds": 120,
+          "retryPolicy": {
+            "max_attempts": 1
+          },
+          "aggregationWorkflowId": "aggregation-judge"
+        }
+      }
+    },
+    {
+      "data": {
+        "config": {
+          "name": "debate_judgment",
+          "description": "The judge's evaluation and winner selection from adversarial defenses",
+          "outputFormat": "text"
+        },
+        "label": "Judge Decision",
+        "type": "result"
+      },
+      "id": "result-judgment",
+      "position": {
+        "x": 1134,
+        "y": 1440
+      },
+      "type": "result"
+    }
+  ],
+  "updated_at": "2024-01-01T00:00:00Z",
+  "version": "1.0.0",
+  "optimize": {
+    "params": [
+      {
+        "path": "nodes[r1-deepseek-flash].data.config.model",
+        "type": "model",
+        "candidates": [
+          "xiaomi/mimo-v2.5",
+          "deepseek/deepseek-v4-flash",
+          "minimax/minimax-m3"
+        ],
+        "group": "agent_models"
+      },
+      {
+        "path": "nodes[r1-deepseek-flash].data.config.systemPrompt",
+        "type": "prompt",
+        "group": "agent_prompts"
+      },
+      {
+        "path": "nodes[r1-deepseek-flash].data.config.temperature",
+        "type": "float",
+        "range": {
+          "min": 0,
+          "max": 1,
+          "step": 0.1
+        },
+        "group": "agent_temperatures"
+      },
+      {
+        "path": "nodes[r1-minimax].data.config.model",
+        "type": "model",
+        "candidates": [
+          "xiaomi/mimo-v2.5",
+          "deepseek/deepseek-v4-flash",
+          "minimax/minimax-m3"
+        ],
+        "group": "agent_models"
+      },
+      {
+        "path": "nodes[r1-minimax].data.config.systemPrompt",
+        "type": "prompt",
+        "group": "agent_prompts"
+      },
+      {
+        "path": "nodes[r1-minimax].data.config.temperature",
+        "type": "float",
+        "range": {
+          "min": 0,
+          "max": 1,
+          "step": 0.1
+        },
+        "group": "agent_temperatures"
+      },
+      {
+        "path": "nodes[r1-mimo].data.config.model",
+        "type": "model",
+        "candidates": [
+          "xiaomi/mimo-v2.5",
+          "deepseek/deepseek-v4-flash",
+          "minimax/minimax-m3"
+        ],
+        "group": "agent_models"
+      },
+      {
+        "path": "nodes[r1-mimo].data.config.systemPrompt",
+        "type": "prompt",
+        "group": "agent_prompts"
+      },
+      {
+        "path": "nodes[r1-mimo].data.config.temperature",
+        "type": "float",
+        "range": {
+          "min": 0,
+          "max": 1,
+          "step": 0.1
+        },
+        "group": "agent_temperatures"
+      },
+      {
+        "path": "nodes[r2-deepseek-flash].data.config.model",
+        "type": "model",
+        "candidates": [
+          "xiaomi/mimo-v2.5",
+          "deepseek/deepseek-v4-flash",
+          "minimax/minimax-m3"
+        ],
+        "group": "agent_models"
+      },
+      {
+        "path": "nodes[r2-deepseek-flash].data.config.systemPrompt",
+        "type": "prompt",
+        "group": "agent_prompts"
+      },
+      {
+        "path": "nodes[r2-deepseek-flash].data.config.temperature",
+        "type": "float",
+        "range": {
+          "min": 0,
+          "max": 1,
+          "step": 0.1
+        },
+        "group": "agent_temperatures"
+      },
+      {
+        "path": "nodes[r2-minimax].data.config.model",
+        "type": "model",
+        "candidates": [
+          "xiaomi/mimo-v2.5",
+          "deepseek/deepseek-v4-flash",
+          "minimax/minimax-m3"
+        ],
+        "group": "agent_models"
+      },
+      {
+        "path": "nodes[r2-minimax].data.config.systemPrompt",
+        "type": "prompt",
+        "group": "agent_prompts"
+      },
+      {
+        "path": "nodes[r2-minimax].data.config.temperature",
+        "type": "float",
+        "range": {
+          "min": 0,
+          "max": 1,
+          "step": 0.1
+        },
+        "group": "agent_temperatures"
+      },
+      {
+        "path": "nodes[r2-mimo].data.config.model",
+        "type": "model",
+        "candidates": [
+          "xiaomi/mimo-v2.5",
+          "deepseek/deepseek-v4-flash",
+          "minimax/minimax-m3"
+        ],
+        "group": "agent_models"
+      },
+      {
+        "path": "nodes[r2-mimo].data.config.systemPrompt",
+        "type": "prompt",
+        "group": "agent_prompts"
+      },
+      {
+        "path": "nodes[r2-mimo].data.config.temperature",
+        "type": "float",
+        "range": {
+          "min": 0,
+          "max": 1,
+          "step": 0.1
+        },
+        "group": "agent_temperatures"
+      },
+      {
+        "path": "nodes[aggregation-judgment].data.config.aggregationConfig.judge_model",
+        "type": "model",
+        "candidates": [
+          "deepseek/deepseek-v4-pro",
+          "deepseek/deepseek-v4-flash",
+          "xiaomi/mimo-v2.5",
+          "minimax/minimax-m3"
+        ],
+        "group": "aggregation_models"
+      },
+      {
+        "path": "nodes[aggregation-judgment].data.config.aggregationConfig.temperature",
+        "type": "float",
+        "range": {
+          "min": 0,
+          "max": 1,
+          "step": 0.1
+        },
+        "group": "aggregation_temperatures"
+      },
+      {
+        "path": "nodes[aggregation-judgment].data.config.aggregationConfig.system_prompt",
+        "type": "prompt",
+        "group": "aggregation_prompts"
+      },
+      {
+        "path": "nodes[aggregation-judgment].data.config.aggregationConfig.prompt",
+        "type": "prompt",
+        "group": "aggregation_prompts"
+      }
+    ],
+    "locked": [
+      "nodes[aggregation-judgment].data.config.aggregationMethod"
+    ],
+    "objectives": [
+      {
+        "metric": "accuracy",
+        "direction": "maximize",
+        "weight": 3
+      },
+      {
+        "metric": "cost_per_item",
+        "direction": "minimize",
+        "weight": 1
+      }
+    ],
+    "constraints": [
+      {
+        "metric": "cost_per_item",
+        "op": "<=",
+        "value": 0.05
+      },
+      {
+        "metric": "parse_rate",
+        "op": ">=",
+        "value": 0.95
+      }
+    ],
+    "stop_policy": {
+      "max_generations": 20,
+      "budget_usd": 10,
+      "plateau_generations": 5,
+      "stability_top_k": 3
+    },
+    "promotion_policy": {
+      "min_accuracy_gain": 0.02,
+      "require_generalization_check": true,
+      "no_regression_on": [
+        "parse_rate",
+        "cost_per_item"
+      ]
+    }
+  }
+}

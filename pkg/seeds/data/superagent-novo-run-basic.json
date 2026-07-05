@@ -1,0 +1,124 @@
+{
+  "created_at": "2026-05-28T00:00:00Z",
+  "description": "Wakes Novomo's Novo runtime through a Superagent node and returns the NovoRun summary.",
+  "edges": [
+    {
+      "id": "edge-input-prompt-superagent",
+      "source": "input-prompt",
+      "target": "superagent-novo"
+    },
+    {
+      "id": "edge-superagent-novo-aggregation-superagent-output",
+      "source": "superagent-novo",
+      "target": "aggregation-superagent-output"
+    },
+    {
+      "id": "edge-aggregation-superagent-output-result-superagent-output",
+      "source": "aggregation-superagent-output",
+      "target": "result-superagent-output"
+    }
+  ],
+  "id": "superagent-novo-run-basic",
+  "metadata": {
+    "tags": [
+      "superagent",
+      "novo-run",
+      "novomo"
+    ]
+  },
+  "name": "Superagent Novo Run Basic",
+  "nodes": [
+    {
+      "data": {
+        "config": {
+          "description": "Goal to hand to the Superagent wake",
+          "name": "user_prompt",
+          "schema": {
+            "user_prompt": {
+              "required": true,
+              "type": "string"
+            }
+          }
+        },
+        "label": "User Prompt",
+        "type": "input"
+      },
+      "id": "input-prompt",
+      "position": {
+        "x": 260,
+        "y": 80
+      },
+      "type": "input"
+    },
+    {
+      "data": {
+        "config": {
+          "description": "Novo wake owned by Novomo",
+          "graceSeconds": 10,
+          "identity": "sde-novo",
+          "name": "Superagent",
+          "prompt": "{{user_prompt}}",
+          "retryPolicy": {
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_attempts": 1,
+            "max_backoff_ms": 30000
+          },
+          "taskSummary": "Consortium Superagent wake",
+          "timeoutSeconds": 600
+        },
+        "label": "Superagent",
+        "type": "novo_run"
+      },
+      "id": "superagent-novo",
+      "position": {
+        "x": 120,
+        "y": 370
+      },
+      "type": "novo_run"
+    },
+    {
+      "id": "aggregation-superagent-output",
+      "type": "aggregation",
+      "position": {
+        "x": 210,
+        "y": 720
+      },
+      "data": {
+        "type": "aggregation",
+        "label": "Superagent Output Aggregation",
+        "config": {
+          "name": "Superagent Output Aggregation",
+          "description": "",
+          "aggregationMethod": "collect",
+          "aggregationConfig": {},
+          "retryPolicy": {
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_attempts": 1,
+            "max_backoff_ms": 30000
+          }
+        }
+      }
+    },
+    {
+      "data": {
+        "config": {
+          "name": "superagent_output",
+          "description": "",
+          "outputFormat": "text"
+        },
+        "label": "Superagent Output",
+        "type": "result"
+      },
+      "id": "result-superagent-output",
+      "position": {
+        "x": 240,
+        "y": 1090
+      },
+      "type": "result"
+    }
+  ],
+  "updated_at": "2026-05-28T00:00:00Z",
+  "version": "1.0.0"
+}

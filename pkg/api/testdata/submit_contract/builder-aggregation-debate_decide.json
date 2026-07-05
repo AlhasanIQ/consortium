@@ -1,0 +1,95 @@
+{
+  "id": "",
+  "name": "builder-aggregation-debate_decide",
+  "description": "",
+  "nodes": [
+    {
+      "id": "agent-a",
+      "type": "prompt",
+      "prompt": "You are an expert. Solve: {{user_prompt}}",
+      "system_prompt": "You are an expert. Solve: {{user_prompt}}",
+      "model": "openai/gpt-4o-mini",
+      "temperature": 0.2,
+      "max_tokens": -1,
+      "timeout_seconds": 180,
+      "retry_policy": {
+        "backoff_ms": 1000,
+        "backoff_multiply": 2,
+        "max_backoff_ms": 30000,
+        "max_attempts": 5
+      },
+      "metadata": {
+        "label": "agent-a Agent(agent-a)"
+      }
+    },
+    {
+      "id": "agent-b",
+      "type": "prompt",
+      "prompt": "You are an expert. Solve: {{user_prompt}}",
+      "system_prompt": "You are an expert. Solve: {{user_prompt}}",
+      "model": "anthropic/claude-sonnet-4.5",
+      "temperature": 0.2,
+      "max_tokens": -1,
+      "timeout_seconds": 180,
+      "retry_policy": {
+        "backoff_ms": 1000,
+        "backoff_multiply": 2,
+        "max_backoff_ms": 30000,
+        "max_attempts": 5
+      },
+      "metadata": {
+        "label": "agent-b Agent(agent-b)"
+      }
+    },
+    {
+      "id": "agg-debate_decide",
+      "type": "result",
+      "output_name": "final_answer",
+      "output_format": "text",
+      "aggregation_method": "debate_decide",
+      "aggregation_config": {
+        "judge_model": "openai/gpt-5-mini",
+        "system_prompt": "You judge competing answer camps.",
+        "prompt": "Question: {{prompt}}\n\n{{camps}}\n\nPick a winner.",
+        "extraction_strategy": "regex",
+        "extraction_pattern": "Answer:\\s*([A-D])",
+        "temperature": 0,
+        "max_tokens": -1,
+        "repair_max_tokens": 256
+      },
+      "retry_policy": {
+        "backoff_ms": 1000,
+        "backoff_multiply": 2,
+        "max_backoff_ms": 30000,
+        "max_attempts": 1
+      },
+      "metadata": {
+        "input_ids": [
+          "agent-a",
+          "agent-b"
+        ],
+        "label": "agg-debate_decide Aggregation(debate_decide aggregation)",
+        "output_name": "final_answer",
+        "output_format": "text",
+        "aggregation_anchor_id": "agg-debate_decide",
+        "aggregation_method": "debate_decide",
+        "presentation_result_id": "result-debate_decide"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e3",
+      "source": "agent-a",
+      "target": "agg-debate_decide"
+    },
+    {
+      "id": "e4",
+      "source": "agent-b",
+      "target": "agg-debate_decide"
+    }
+  ],
+  "context": {
+    "user_prompt": "What is 2 + 2? Reply with just the number."
+  }
+}

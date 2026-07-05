@@ -1,0 +1,78 @@
+{
+  "id": "reasoning-informed-captain-synthesis",
+  "name": "ensemble-query",
+  "context": {
+    "user_prompt": "What is 2 + 2? Reply with just the number."
+  },
+  "nodes": [
+    {
+      "id": "agent-a",
+      "type": "prompt",
+      "model": "xiaomi/mimo-v2-flash",
+      "prompt": "What is 2 + 2? Reply with just the number.",
+      "system_prompt": "You are an expert. Solve: What is 2 + 2? Reply with just the number.",
+      "temperature": 0.2,
+      "max_tokens": -1,
+      "timeout_seconds": 180,
+      "retry_policy": {
+        "backoff_ms": 1000,
+        "backoff_multiply": 2,
+        "max_backoff_ms": 30000,
+        "max_attempts": 5
+      }
+    },
+    {
+      "id": "agent-b",
+      "type": "prompt",
+      "model": "moonshotai/kimi-k2.7-code",
+      "prompt": "What is 2 + 2? Reply with just the number.",
+      "system_prompt": "You are an expert. Solve: What is 2 + 2? Reply with just the number.",
+      "temperature": 0.2,
+      "max_tokens": -1,
+      "timeout_seconds": 180,
+      "retry_policy": {
+        "backoff_ms": 1000,
+        "backoff_multiply": 2,
+        "max_backoff_ms": 30000,
+        "max_attempts": 5
+      }
+    },
+    {
+      "id": "result-synthesis",
+      "type": "result",
+      "output_name": "synthesized_response",
+      "output_format": "text",
+      "aggregation_method": "synthesis",
+      "aggregation_config": {
+        "model": "minimax/minimax-m2.5",
+        "system_prompt": "You synthesize the strongest answer from all responses.",
+        "prompt": "Question: {{prompt}}\n\nResponses:\n{{responses}}\n\nProduce one best answer.",
+        "temperature": 0,
+        "max_tokens": -1,
+        "original_prompt": "What is 2 + 2? Reply with just the number."
+      },
+      "retry_policy": {
+        "backoff_ms": 1000,
+        "backoff_multiply": 2,
+        "max_backoff_ms": 30000,
+        "max_attempts": 1
+      },
+      "metadata": {
+        "input_ids": [
+          "agent-a",
+          "agent-b"
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "agent-a",
+      "target": "result-synthesis"
+    },
+    {
+      "source": "agent-b",
+      "target": "result-synthesis"
+    }
+  ]
+}

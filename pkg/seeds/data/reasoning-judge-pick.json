@@ -1,0 +1,222 @@
+{
+  "created_at": "2024-01-01T00:00:00Z",
+  "description": "Multi-model reasoning workflow with judge aggregation — multiple LLMs respond and a single judge selects the best answer",
+  "edges": [
+    {
+      "id": "edge-input-prompt-agent-mimo-pro",
+      "source": "input-prompt",
+      "target": "agent-mimo-pro"
+    },
+    {
+      "id": "edge-input-prompt-agent-deepseek-pro",
+      "source": "input-prompt",
+      "target": "agent-deepseek-pro"
+    },
+    {
+      "id": "edge-input-prompt-agent-minimax",
+      "source": "input-prompt",
+      "target": "agent-minimax"
+    },
+    {
+      "id": "edge-agent-mimo-pro-aggregation-judge",
+      "source": "agent-mimo-pro",
+      "target": "aggregation-judge"
+    },
+    {
+      "id": "edge-agent-deepseek-pro-aggregation-judge",
+      "source": "agent-deepseek-pro",
+      "target": "aggregation-judge"
+    },
+    {
+      "id": "edge-agent-minimax-aggregation-judge",
+      "source": "agent-minimax",
+      "target": "aggregation-judge"
+    },
+    {
+      "id": "edge-aggregation-judge-result-judge",
+      "source": "aggregation-judge",
+      "target": "result-judge"
+    }
+  ],
+  "id": "reasoning-judge-pick",
+  "metadata": {
+    "tags": [
+      "judge",
+      "multi-model",
+      "reasoning"
+    ]
+  },
+  "name": "Judge Pick",
+  "nodes": [
+    {
+      "data": {
+        "config": {
+          "description": "The question to send to all models",
+          "maxTokens": -1,
+          "name": "user_prompt",
+          "schema": {
+            "user_prompt": {
+              "required": true,
+              "type": "string"
+            }
+          }
+        },
+        "label": "User Prompt",
+        "type": "input"
+      },
+      "id": "input-prompt",
+      "position": {
+        "x": 856,
+        "y": 80
+      },
+      "type": "input"
+    },
+    {
+      "data": {
+        "config": {
+          "maxTokens": -1,
+          "model": "xiaomi/mimo-v2.5-pro",
+          "name": "MiMo V2.5 Pro",
+          "openRouterReasoning": {
+            "effort": "high"
+          },
+          "provider": "openrouter",
+          "systemPrompt": "You are an expert problem solver. Think through problems carefully:\n1. Identify what is being asked\n2. Consider the key facts and evidence\n3. Reason step by step through the problem\n4. Check your reasoning for errors or gaps\n5. State your final answer clearly\n\nBe precise and thorough. If you are uncertain, explain why.",
+          "temperature": 0.2,
+          "timeoutSeconds": 180,
+          "userPrompt": "{{user_prompt}}",
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000
+          }
+        },
+        "label": "MiMo V2.5 Pro",
+        "type": "agent"
+      },
+      "id": "agent-mimo-pro",
+      "position": {
+        "x": 716,
+        "y": 370
+      },
+      "type": "agent"
+    },
+    {
+      "data": {
+        "config": {
+          "maxTokens": -1,
+          "model": "deepseek/deepseek-v4-pro",
+          "name": "DeepSeek V4 Pro",
+          "openRouterReasoning": {
+            "effort": "high"
+          },
+          "provider": "openrouter",
+          "systemPrompt": "You are an expert problem solver. Think through problems carefully:\n1. Identify what is being asked\n2. Consider the key facts and evidence\n3. Reason step by step through the problem\n4. Check your reasoning for errors or gaps\n5. State your final answer clearly\n\nBe precise and thorough. If you are uncertain, explain why.",
+          "temperature": 0.2,
+          "timeoutSeconds": 180,
+          "userPrompt": "{{user_prompt}}",
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000
+          }
+        },
+        "label": "DeepSeek V4 Pro",
+        "type": "agent"
+      },
+      "id": "agent-deepseek-pro",
+      "position": {
+        "x": 1312,
+        "y": 370
+      },
+      "type": "agent"
+    },
+    {
+      "data": {
+        "config": {
+          "maxTokens": -1,
+          "model": "minimax/minimax-m3",
+          "name": "MiniMax M3",
+          "openRouterReasoning": {
+            "effort": "high"
+          },
+          "provider": "openrouter",
+          "systemPrompt": "You are an expert problem solver. Think through problems carefully:\n1. Identify what is being asked\n2. Consider the key facts and evidence\n3. Reason step by step through the problem\n4. Check your reasoning for errors or gaps\n5. State your final answer clearly\n\nBe precise and thorough. If you are uncertain, explain why.",
+          "temperature": 0.2,
+          "timeoutSeconds": 180,
+          "userPrompt": "{{user_prompt}}",
+          "retryPolicy": {
+            "max_attempts": 5,
+            "backoff_ms": 1000,
+            "backoff_multiply": 2,
+            "max_backoff_ms": 30000
+          }
+        },
+        "label": "MiniMax M3",
+        "type": "agent"
+      },
+      "id": "agent-minimax",
+      "position": {
+        "x": 120,
+        "y": 370
+      },
+      "type": "agent"
+    },
+    {
+      "id": "aggregation-judge",
+      "type": "aggregation",
+      "position": {
+        "x": 806,
+        "y": 720
+      },
+      "data": {
+        "type": "aggregation",
+        "label": "Judge Aggregation",
+        "config": {
+          "name": "Judge Aggregation",
+          "description": "The winning response selected by a single judge",
+          "aggregationMethod": "judge",
+          "aggregationConfig": {
+            "judge_model": "deepseek/deepseek-v4-pro",
+            "max_tokens": -1,
+            "extraction_strategy": "regex",
+            "extraction_pattern": "(?im)(?:^|\\n|[^\\n]{0,60}\\b)(?:final answer|answer)\\s*(?:(?:is)?\\s*[:\\-]\\s*(?:\\(?([A-Z])\\)?\\s*(?:[.)]?\\s*$|\\s+(?:is|was|are|because|since|as|therefore|so)\\b)|\\(?([^\\n)]{1,80}?)\\)?\\s*(?:[.;]\\s*$|$|\\n|[.;]\\s+(?:because|since|as|this|the|it)\\b|,?\\s+(?:because|since|as|therefore|so)\\b))|is\\s*:?\\s*(?:\\(?([A-Z])\\)?\\s*(?:[.)]?\\s*$|\\s+(?:is|was|are|because|since|as|therefore|so)\\b)|([-+]?(?:\\d+(?:\\.\\d+)?|[A-Z]\\s*=\\s*[-+]?\\d+(?:\\.\\d+)?))\\s*(?:[.;]?\\s*$|,?\\s+(?:because|since|as|therefore|so)\\b)))",
+            "repair_max_tokens": 256,
+            "openRouterReasoning": {
+              "effort": "low"
+            },
+            "system_prompt": "You are an impartial judge evaluating AI responses. Your task is to analyze responses and determine which one provides the best answer.\n\nEvaluate each response based on:\n1. Accuracy and correctness\n2. Completeness\n3. Clarity and coherence\n4. Relevance to the question\n\nAfter your analysis, you MUST end your response with exactly one line in this format:\nWINNER: [agent_id]\n\nWhere [agent_id] is the ID of the agent with the best response.",
+            "temperature": 0.3,
+            "prompt": "Original Question: {{prompt}}\\n\\nResponses:\\n{{responses}}\\n\\nReturn WINNER: [agent_id]."
+          },
+          "timeoutSeconds": 120,
+          "retryPolicy": {
+            "max_attempts": 1
+          },
+          "aggregationWorkflowId": "aggregation-judge"
+        }
+      }
+    },
+    {
+      "data": {
+        "config": {
+          "name": "judged_response",
+          "description": "The winning response selected by a single judge",
+          "outputFormat": "text"
+        },
+        "label": "Judge Result",
+        "type": "result"
+      },
+      "id": "result-judge",
+      "position": {
+        "x": 836,
+        "y": 1090
+      },
+      "type": "result"
+    }
+  ],
+  "updated_at": "2024-01-01T00:00:00Z",
+  "version": "1.0.0"
+}

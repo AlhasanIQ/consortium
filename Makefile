@@ -19,6 +19,9 @@ DB_MAX_OPEN_CONNS ?= $(shell ./scripts/dev-env-value.sh DB_MAX_OPEN_CONNS 4 2>/d
 DB_MAX_IDLE_CONNS ?= $(shell ./scripts/dev-env-value.sh DB_MAX_IDLE_CONNS $(DB_MAX_OPEN_CONNS) 2>/dev/null)
 BIND_ADDR ?= $(shell ./scripts/dev-env-value.sh BIND_ADDR 127.0.0.1:$(PORT) 2>/dev/null)
 CONCTL_URL ?= $(shell ./scripts/dev-env-value.sh CONCTL_URL $(BACKEND_URL) 2>/dev/null)
+BACKEND_READY_ATTEMPTS ?= 240
+FRONTEND_READY_ATTEMPTS ?= 80
+READY_SLEEP_SECONDS ?= 0.25
 VERIFY_PORT ?= $(shell echo $$(( $(PORT) + 1000 )))
 VERIFY_URL ?= http://localhost:$(VERIFY_PORT)
 SERVER_PID_FILE ?= .server.pid
@@ -87,7 +90,7 @@ backend-bg:
 		rm -f $(SERVER_PID_FILE); \
 		exit 1; \
 	fi
-	@if ! scripts/wait-for-url.sh "$(BACKEND_URL)/health" "backend" 40 0.25; then \
+	@if ! scripts/wait-for-url.sh "$(BACKEND_URL)/health" "backend" "$(BACKEND_READY_ATTEMPTS)" "$(READY_SLEEP_SECONDS)"; then \
 		scripts/stop-process-tree.sh "$(SERVER_PID_FILE)" "backend" "$(PORT)" >/dev/null 2>&1 || true; \
 		echo "❌ Backend failed readiness check. Check $(SERVER_LOG_FILE)"; \
 		exit 1; \
@@ -334,7 +337,7 @@ frontend-bg:
 		rm -f $(FRONTEND_PID_FILE); \
 		exit 1; \
 	fi
-	@if ! scripts/wait-for-url.sh "$(FRONTEND_URL)" "frontend" 40 0.25; then \
+	@if ! scripts/wait-for-url.sh "$(FRONTEND_URL)" "frontend" "$(FRONTEND_READY_ATTEMPTS)" "$(READY_SLEEP_SECONDS)"; then \
 		scripts/stop-process-tree.sh "$(FRONTEND_PID_FILE)" "frontend" "$(FRONTEND_PORT)" >/dev/null 2>&1 || true; \
 		echo "❌ Frontend failed readiness check. Check $(FRONTEND_LOG_FILE)"; \
 		exit 1; \

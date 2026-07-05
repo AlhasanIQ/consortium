@@ -24,10 +24,24 @@ Status: v0.1. The core workflow runtime is usable, but this is still early softw
 
 Windows users should use WSL for the full local development workflow. Release binaries should run natively once published for the target platform.
 
+Fresh machine setup examples:
+
+```bash
+# macOS
+brew install go bun make
+
+# Debian/Ubuntu/WSL
+sudo apt-get update
+sudo apt-get install -y git curl unzip make bash lsof ca-certificates
+# Install Go 1.25+ from https://go.dev/doc/install
+curl -fsSL https://bun.sh/install | bash -s "bun-v1.3.7"
+export PATH="$HOME/.bun/bin:$PATH"
+```
+
 ## Quick Start
 
 ```bash
-git clone https://github.com/alhasaniq/consortium.git
+git clone https://github.com/AlhasanIQ/consortium.git
 cd consortium
 
 cp .env.example .env

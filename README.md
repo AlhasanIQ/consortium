@@ -130,9 +130,11 @@ make test
 
 Dev mode uses two ports: Vite serves the live frontend on `FRONTEND_PORT` (default `3000`) and the Go backend serves APIs on `PORT` (default `8080`). Production release builds use a single binary with embedded frontend assets.
 
-## Use An Ensemble From Another App
+## How To
 
-After `make dev`, create an API key:
+### Use An Ensemble From Another App
+
+After you run consortium (for experimentation: `make dev`), create an API key:
 
 ```bash
 make conctl-build
@@ -169,6 +171,57 @@ console.log(response.choices[0].message.content);
 ```
 
 The application receives a normal OpenAI-shaped response while Consortium runs the routed ensemble workflow behind the model name.
+
+### Example: move an "Explain Like I’m 5" app
+
+Suppose your app currently calls OpenAI like this:
+
+```js
+// Before:
+const answer = await client.chat.completions.create({
+  model: "gpt-4o-mini",
+  messages: [{ role: "user", content: `Explain like I'm 5: ${question}` }],
+});
+```
+
+1. Create an API route that names the workflow your app should use:
+
+   ```bash
+   ./bin/conctl api route-upsert \
+     --api-model eli5-captain \
+     --mode workflow \
+     --workflow-id reasoning-informed-captain-synthesis-cheap \
+     --yes
+   ```
+
+2. Create a Consortium API key, then set it in the app:
+
+   ```bash
+   ./bin/conctl api key-create --name eli5-app --yes
+   ```
+
+3. Point the OpenAI client at Consortium and change the `model` to the route name:
+
+   ```js
+   // After:
+   const client = new OpenAI({
+     apiKey: process.env.CONSORTIUM_OPENAI_API_KEY,
+     baseURL: "http://localhost:8080/v1",
+   });
+
+   const answer = await client.chat.completions.create({
+     model: "eli5-captain",
+     messages: [{ role: "user", content: `Explain like I'm 5: ${question}` }],
+   });
+   ```
+
+The `model` selects the configured route; public `/v1` requests do not accept a
+`workflow_id`. Do not only switch the URL: `gpt-4o-mini` is a direct-model
+route, not the Informed Captain workflow. To preserve a caller-supplied
+`system` or `developer` instruction, fork the seeded workflow and add
+`{{system_prompt}}` to its advisor prompts before routing your app to that
+custom workflow. See [Public API](docs/public-api.md) for routing, supported
+fields, streaming, and operational limits.
 
 ## Production Build
 

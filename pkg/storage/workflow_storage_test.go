@@ -107,14 +107,22 @@ func TestWorkflowStorage(t *testing.T) {
 		existingWorkflows, _ := store.ListWorkflows(100)
 		existingCount := len(existingWorkflows)
 
+		base := time.Date(2100, time.January, 1, 0, 0, 0, 0, time.UTC)
 		for i := 1; i <= 3; i++ {
 			wf := &WorkflowDefinition{
 				ID:         "wf-" + string(rune('0'+i)),
 				Name:       "Workflow " + string(rune('0'+i)),
 				Definition: `{}`,
 			}
-			store.CreateWorkflow(wf)
-			time.Sleep(10 * time.Millisecond) // Ensure different timestamps
+			if err := store.CreateWorkflow(wf); err != nil {
+				t.Fatalf("CreateWorkflow %s: %v", wf.ID, err)
+			}
+			at := base.Add(time.Duration(i) * time.Minute)
+			if _, err := store.DB().Exec(`
+				UPDATE workflows SET created_at = ?, updated_at = ? WHERE id = ?
+			`, at, at, wf.ID); err != nil {
+				t.Fatalf("set workflow timestamp %s: %v", wf.ID, err)
+			}
 		}
 
 		expectedCount := existingCount + 3
@@ -141,7 +149,9 @@ func TestWorkflowStorage(t *testing.T) {
 				Name:       "Workflow " + string(rune('0'+i)),
 				Definition: `{}`,
 			}
-			store.CreateWorkflow(wf)
+			if err := store.CreateWorkflow(wf); err != nil {
+				t.Fatalf("CreateWorkflow %s: %v", wf.ID, err)
+			}
 		}
 
 		workflows, err := store.ListWorkflows(2)
@@ -299,12 +309,13 @@ func TestMarshalJSON(t *testing.T) {
 	tests := []struct {
 		name    string
 		input   interface{}
+		want    string
 		wantErr bool
 	}{
-		{"simple map", map[string]string{"key": "value"}, false},
-		{"struct", struct{ Name string }{"test"}, false},
-		{"slice", []int{1, 2, 3}, false},
-		{"nil", nil, false},
+		{"simple map", map[string]string{"key": "value"}, `{"key":"value"}`, false},
+		{"struct", struct{ Name string }{"test"}, `{"Name":"test"}`, false},
+		{"slice", []int{1, 2, 3}, `[1,2,3]`, false},
+		{"nil", nil, `null`, false},
 	}
 
 	for _, tt := range tests {
@@ -313,17 +324,19 @@ func TestMarshalJSON(t *testing.T) {
 			if (err != nil) != tt.wantErr {
 				t.Errorf("MarshalJSON() error = %v, wantErr %v", err, tt.wantErr)
 			}
-			if !tt.wantErr && result == "" {
-				t.Error("expected non-empty JSON string")
+			if !tt.wantErr && result != tt.want {
+				t.Errorf("MarshalJSON() = %q, want %q", result, tt.want)
 			}
 		})
 	}
 }
 
 func setupStorageTest(t *testing.T) *Storage {
+	t.Helper()
 	store, err := NewStorage(":memory:")
 	if err != nil {
 		t.Fatalf("failed to create storage: %v", err)
 	}
+	t.Cleanup(func() { _ = store.Close() })
 	return store
 }

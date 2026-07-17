@@ -147,6 +147,12 @@ func TestCORS_CIAndProductionScenarios(t *testing.T) {
 			}
 			if got := rec.Header().Get("Access-Control-Allow-Headers"); got == "" {
 				t.Fatal("expected Access-Control-Allow-Headers header")
+			} else {
+				for _, want := range []string{"Content-Type", "Authorization", "X-Request-ID", "Idempotency-Key"} {
+					if !strings.Contains(got, want) {
+						t.Errorf("allow-headers=%q missing %q", got, want)
+					}
+				}
 			}
 			if got := rec.Header().Get("Access-Control-Expose-Headers"); got == "" {
 				t.Fatal("expected Access-Control-Expose-Headers header")

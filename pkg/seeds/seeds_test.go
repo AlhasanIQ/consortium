@@ -169,7 +169,7 @@ func TestGetJSONByID_Found(t *testing.T) {
 	// Get any valid ID from the seed list
 	all := GetAllJSON()
 	if len(all) == 0 {
-		t.Skip("no seeds available")
+		t.Fatal("embedded seed list is unexpectedly empty")
 	}
 	var firstID string
 	var data struct {

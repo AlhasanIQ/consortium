@@ -15,7 +15,7 @@ make build-release
 3. Pre-compresses frontend assets.
 4. Copies assets into `pkg/static/dist`.
 5. Builds the Go server with the `release` build tag.
-6. Starts the binary briefly and checks `/health` and `/`.
+6. Starts the binary and verifies liveness, the embedded frontend and one hashed asset, cache headers, and the unauthenticated `/v1` boundary.
 
 The output binary is `bin/consortium-release`.
 
@@ -60,6 +60,12 @@ Consortium v0.1 is not a hardened multi-tenant SaaS boundary.
 - Provider metadata may be persisted for debugging. Treat job history as sensitive.
 
 These limitations are tracked as code TODOs and should be revisited before a stronger production release.
+
+## Scheduler and Restart Model
+
+Consortium v0.1 supports exactly one active server process for each SQLite database. Do not point multiple replicas at the same database: worker ownership is coordinated inside one process and does not yet use a distributed lease or fencing token.
+
+Durable jobs left running by an abrupt process failure can be recovered from persisted history when that single process restarts. A graceful server shutdown currently cancels active work before exit; it is not equivalent to crash recovery. Plan deployments and maintenance windows around that distinction.
 
 ## Public API
 

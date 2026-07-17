@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { generateIdempotencyKey, useEnsembleStore } from '../stores/ensembleStore';
+import { type EnsembleJobSnapshot, generateIdempotencyKey, useEnsembleStore } from '../stores/ensembleStore';
 import type { ConnectionState } from '../types/connection';
 import {
   type AggregationDetails,
@@ -64,6 +64,19 @@ export interface DuplicateInfo {
 
 const API_BASE = '/api';
 
+export async function cancelJobAfterServerAcknowledgement(jobId: string, onConfirmed: () => void): Promise<void> {
+  const response = await fetch(`${API_BASE}/jobs/${jobId}/cancel`, {
+    method: 'POST',
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Cancel request failed: ${response.status}${errorText ? ` - ${errorText}` : ''}`);
+  }
+
+  onConfirmed();
+}
+
 export function useEnsembleWebSocket() {
   const wsManagerRef = useRef<WebSocketManager | null>(null);
   const currentIdempotencyKeyRef = useRef<string | null>(null);
@@ -79,6 +92,7 @@ export function useEnsembleWebSocket() {
     appendAgentStream,
     completeAgent,
     failAgent,
+    applyJobSnapshot,
     startAggregation,
     appendAggregationStream,
     completeAggregation,
@@ -325,88 +339,14 @@ export function useEnsembleWebSocket() {
     });
   }, []);
 
-  // Helper to process completed job data
-  const processCompletedJob = useCallback(
-    async (jobData: Record<string, unknown>, jobId: string) => {
-      const terminalStatus = String(jobData.status || '').toLowerCase();
-      const nodes = (jobData.nodes || []) as Array<{
-        node_id: string;
-        status?: string;
-        output?: string;
-        error_message?: string;
-        latency_ms?: number;
-        cost?: number;
-        tokens_input?: number;
-        tokens_output?: number;
-      }>;
-      let synthesisOutput = '';
-
-      const currentAgents = useEnsembleStore.getState().agents;
-
-      const findAgent = (nodeId: string) => {
-        const normalized = nodeId.toLowerCase();
-        let agent = currentAgents.find((a) => a.id === nodeId);
-        if (agent) return agent;
-        agent = currentAgents.find((a) => normalized.includes(a.displayName.toLowerCase()));
-        if (agent) return agent;
-        agent = currentAgents.find((a) => {
-          const modelLower = a.model.toLowerCase();
-          return modelLower.includes(normalized) || normalized.includes(modelLower.split('/').pop() || '');
-        });
-        return agent;
-      };
-
-      // Replay the final node states into the UI.
-      for (const node of nodes) {
-        if (node.node_id === 'synthesize') {
-          synthesisOutput = node.output || '';
-        } else {
-          const agent = findAgent(node.node_id);
-          if (agent) {
-            const totalTokens = (node.tokens_input || 0) + (node.tokens_output || 0);
-            const nodeStatus = (node.status || '').toLowerCase();
-            if (nodeStatus === 'failed' || nodeStatus === 'cancelled') {
-              failAgent(agent.id, node.error_message || 'Node failed');
-            } else if (nodeStatus === 'completed') {
-              completeAgent(agent.id, node.output || '', node.latency_ms || 0, node.cost || 0, totalTokens);
-            } else {
-              updateAgentStatus(agent.id, 'thinking');
-            }
-          }
-        }
-      }
-
-      if (terminalStatus === 'completed') {
-        startAggregation(getSelectedWorkflowAggregationMethod());
-        const finalOutput = synthesisOutput || (jobData.result_text as string) || '';
-        completeAggregation(finalOutput, (jobData.cost as number) || 0);
-        setExecutionComplete(jobId);
+  const processJobSnapshot = useCallback(
+    (jobData: EnsembleJobSnapshot, jobId: string) => {
+      applyJobSnapshot(jobData, jobId, getSelectedWorkflowAggregationMethod());
+      if ((jobData.status || '').toLowerCase() === 'completed') {
         clearDraft();
-        return;
       }
-
-      if (terminalStatus === 'cancelled') {
-        setExecutionCancelled(jobId);
-        return;
-      }
-
-      setExecutionError(
-        (jobData.error_message as string) || (jobData.error as string) || 'Workflow failed',
-        jobId || undefined,
-      );
     },
-    [
-      updateAgentStatus,
-      completeAgent,
-      failAgent,
-      startAggregation,
-      getSelectedWorkflowAggregationMethod,
-      completeAggregation,
-      setExecutionComplete,
-      setExecutionCancelled,
-      setExecutionError,
-      clearDraft,
-    ],
+    [applyJobSnapshot, clearDraft, getSelectedWorkflowAggregationMethod],
   );
 
   const execute = useCallback(
@@ -573,7 +513,7 @@ Please provide a synthesized response that captures the best insights from all m
           const jobResponse = await fetch(`${API_BASE}/jobs/${jobId}`);
           if (jobResponse.ok) {
             const jobData = await jobResponse.json();
-            await processCompletedJob(jobData, jobId);
+            processJobSnapshot(jobData, jobId);
           } else {
             setExecutionError('Failed to fetch completed job results');
           }
@@ -592,6 +532,7 @@ Please provide a synthesized response that captures the best insights from all m
       const callbacks: WebSocketManagerCallbacks = {
         onMessage: handleMessage,
         onStateChange: handleStateChange,
+        onSnapshot: (snapshot) => processJobSnapshot(snapshot as EnsembleJobSnapshot, jobId),
         onReconnecting: handleReconnecting,
         onRecovered: handleRecovered,
       };
@@ -619,7 +560,7 @@ Please provide a synthesized response that captures the best insights from all m
       handleStateChange,
       handleReconnecting,
       handleRecovered,
-      processCompletedJob,
+      processJobSnapshot,
       resetExecutionToIdle,
     ],
   );
@@ -628,34 +569,27 @@ Please provide a synthesized response that captures the best insights from all m
     const state = useEnsembleStore.getState().executionState;
     const jobId = state.status === 'streaming' ? state.jobId : null;
 
-    currentIdempotencyKeyRef.current = null;
-
-    // Disconnect WebSocket manager
-    if (wsManagerRef.current) {
-      wsManagerRef.current.disconnect();
-      wsManagerRef.current = null;
-    }
-
     if (jobId) {
       try {
         console.log('[Ensemble] Cancelling job:', jobId);
-        const response = await fetch(`${API_BASE}/jobs/${jobId}/cancel`, {
-          method: 'POST',
+        await cancelJobAfterServerAcknowledgement(jobId, () => {
+          currentIdempotencyKeyRef.current = null;
+          if (wsManagerRef.current) {
+            wsManagerRef.current.disconnect();
+            wsManagerRef.current = null;
+          }
+          setExecutionCancelled(jobId);
         });
-
-        if (response.ok) {
-          console.log('[Ensemble] Job cancelled successfully');
-          setExecutionCancelled(jobId);
-        } else {
-          const errorText = await response.text();
-          console.warn('[Ensemble] Cancel request failed:', response.status, errorText);
-          setExecutionCancelled(jobId);
-        }
+        console.log('[Ensemble] Job cancellation acknowledged');
       } catch (err) {
         console.warn('[Ensemble] Cancel request error:', err);
-        setExecutionCancelled(jobId);
       }
     } else {
+      currentIdempotencyKeyRef.current = null;
+      if (wsManagerRef.current) {
+        wsManagerRef.current.disconnect();
+        wsManagerRef.current = null;
+      }
       reset();
     }
   }, [reset, setExecutionCancelled]);
@@ -697,7 +631,7 @@ Please provide a synthesized response that captures the best insights from all m
           const jobData = await jobRes.json();
           if (jobData.status === 'completed' || jobData.status === 'failed' || jobData.status === 'cancelled') {
             startExecution(jobId);
-            await processCompletedJob(jobData, jobId);
+            processJobSnapshot(jobData, jobId);
             return;
           }
         }
@@ -711,6 +645,7 @@ Please provide a synthesized response that captures the best insights from all m
       const callbacks: WebSocketManagerCallbacks = {
         onMessage: handleMessage,
         onStateChange: handleStateChange,
+        onSnapshot: (snapshot) => processJobSnapshot(snapshot as EnsembleJobSnapshot, jobId),
         onReconnecting: handleReconnecting,
         onRecovered: handleRecovered,
       };
@@ -728,7 +663,7 @@ Please provide a synthesized response that captures the best insights from all m
     [
       startExecution,
       setStreaming,
-      processCompletedJob,
+      processJobSnapshot,
       handleMessage,
       handleStateChange,
       handleReconnecting,

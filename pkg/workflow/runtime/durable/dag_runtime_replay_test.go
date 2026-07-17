@@ -137,6 +137,32 @@ func TestDAGRuntime_ReplaySeedsSkipReusedNodes(t *testing.T) {
 			}
 		}
 	}
+
+	history, err := store.GetHistoryEvents(context.Background(), jobID)
+	if err != nil {
+		t.Fatalf("GetHistoryEvents failed: %v", err)
+	}
+	for _, replayedID := range []string{"a", "b"} {
+		var completed *storage.HistoryEvent
+		for _, event := range history {
+			if event.Type == string(runtime.HistoryActivityCompleted) && event.NodeID == replayedID {
+				completed = event
+				break
+			}
+		}
+		if completed == nil {
+			t.Fatalf("missing replayed activity_completed event for %s", replayedID)
+		}
+		if completed.Attributes["replayed"] != true {
+			t.Errorf("replayed history for %s missing replayed=true: %#v", replayedID, completed.Attributes)
+		}
+		if completed.Attributes["cost"] != float64(0) {
+			t.Errorf("replayed history for %s cost = %v, want 0", replayedID, completed.Attributes["cost"])
+		}
+		if completed.Attributes["seed_cost"] == nil || completed.Attributes["output_checksum"] == "" {
+			t.Errorf("replayed history for %s missing seed audit fields: %#v", replayedID, completed.Attributes)
+		}
+	}
 }
 
 func TestDAGRuntime_ReplayRequiredCandidateHashMismatchFails(t *testing.T) {

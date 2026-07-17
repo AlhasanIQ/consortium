@@ -32,6 +32,9 @@ jobs:
       - name: Run tests with coverage
         run: go test -v -coverprofile=coverage.out -covermode=atomic ./...
 
+      - name: Run race-sensitive core suites
+        run: go test -race ./pkg/jobs ./pkg/storage ./pkg/api ./pkg/workflow/runtime/durable
+
       - name: Audit release source
         run: scripts/audit-release.sh
 

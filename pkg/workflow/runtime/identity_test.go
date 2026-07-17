@@ -3,6 +3,8 @@ package runtime
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/alhasaniq/consortium/pkg/workflow"
 )
 
 func TestComputeDAGHash_Deterministic(t *testing.T) {
@@ -170,15 +172,94 @@ func TestFreezeWorkflow_Deterministic(t *testing.T) {
 		t.Fatalf("second freeze failed: %v", err)
 	}
 
-	// DAGHash may differ between snapshot1 and snapshot2 because FrozenAt
-	// timestamp differs. What matters is that ComputeDAGHash is deterministic:
-	// the same bytes always produce the same hash.
-	hash1a := ComputeDAGHash(snapshot1.Definition)
-	hash1b := ComputeDAGHash(snapshot1.Definition)
-	if hash1a != hash1b {
-		t.Error("hash of same definition bytes should be identical")
+	if snapshot1.DAGHash != snapshot2.DAGHash {
+		t.Fatalf("identical semantic workflows produced different DAG hashes: %s != %s", snapshot1.DAGHash, snapshot2.DAGHash)
 	}
-	_ = snapshot2 // used for structural equivalence above, not hash equality
+}
+
+func TestFreezeWorkflow_NodeOrderFollowsGraphSemantics(t *testing.T) {
+	ordered := []NodeForFreeze{
+		{ID: "A", Type: "prompt", Prompt: "first"},
+		{ID: "B", Type: "prompt", Prompt: "second"},
+	}
+	reversed := []NodeForFreeze{ordered[1], ordered[0]}
+
+	implicitAB, err := FreezeWorkflow("wf-order", "Order", "", ordered, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("freeze implicit A-B: %v", err)
+	}
+	implicitBA, err := FreezeWorkflow("wf-order", "Order", "", reversed, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("freeze implicit B-A: %v", err)
+	}
+	if implicitAB.DAGHash == implicitBA.DAGHash {
+		t.Fatal("reordering an implicit sequence did not change DAG identity")
+	}
+
+	explicitEdges := []EdgeForFreeze{{Source: "A", Target: "B"}}
+	explicitAB, err := FreezeWorkflow("wf-order", "Order", "", ordered, explicitEdges, nil, nil)
+	if err != nil {
+		t.Fatalf("freeze explicit A-B: %v", err)
+	}
+	explicitBA, err := FreezeWorkflow("wf-order", "Order", "", reversed, explicitEdges, nil, nil)
+	if err != nil {
+		t.Fatalf("freeze reordered explicit A-B: %v", err)
+	}
+	if explicitAB.DAGHash != explicitBA.DAGHash {
+		t.Fatalf("serialized node order changed explicit graph identity: %s != %s", explicitAB.DAGHash, explicitBA.DAGHash)
+	}
+}
+
+func TestFreezeWorkflowDefinition_RuntimeSemanticFieldsAffectDAGHash(t *testing.T) {
+	makeWorkflow := func() *workflow.Workflow {
+		return &workflow.Workflow{
+			ID:   "wf-semantic-identity",
+			Name: "Semantic identity",
+			Nodes: []*workflow.Node{{
+				ID:           "decision",
+				Type:         workflow.NodeTypeConditional,
+				Condition:    "{{answer}} == yes",
+				RetryPolicy:  &workflow.RetryPolicy{MaxAttempts: 2},
+				TrueBranch:   &workflow.Node{Type: workflow.NodeTypeResult, OutputName: "accepted"},
+				FalseBranch:  &workflow.Node{Type: workflow.NodeTypeResult, OutputName: "rejected"},
+				OutputName:   "decision",
+				OutputFormat: "text",
+				Metadata: map[string]interface{}{
+					"tools": []interface{}{map[string]interface{}{"type": "function", "name": "lookup"}},
+				},
+			}},
+		}
+	}
+
+	base, err := FreezeWorkflowDefinition(makeWorkflow())
+	if err != nil {
+		t.Fatalf("freeze base workflow: %v", err)
+	}
+	changes := []struct {
+		name   string
+		mutate func(*workflow.Node)
+	}{
+		{name: "retry policy", mutate: func(n *workflow.Node) { n.RetryPolicy.MaxAttempts = 3 }},
+		{name: "true branch", mutate: func(n *workflow.Node) { n.TrueBranch.OutputName = "changed" }},
+		{name: "false branch", mutate: func(n *workflow.Node) { n.FalseBranch.OutputName = "changed" }},
+		{name: "output format", mutate: func(n *workflow.Node) { n.OutputFormat = "json" }},
+		{name: "tools", mutate: func(n *workflow.Node) {
+			n.Metadata["tools"] = []interface{}{map[string]interface{}{"type": "function", "name": "different"}}
+		}},
+	}
+	for _, tt := range changes {
+		t.Run(tt.name, func(t *testing.T) {
+			changedWorkflow := makeWorkflow()
+			tt.mutate(changedWorkflow.Nodes[0])
+			changed, err := FreezeWorkflowDefinition(changedWorkflow)
+			if err != nil {
+				t.Fatalf("freeze changed workflow: %v", err)
+			}
+			if changed.DAGHash == base.DAGHash {
+				t.Fatalf("%s change did not affect frozen DAG hash", tt.name)
+			}
+		})
+	}
 }
 
 func TestFreezeWorkflow_HarnessAffectsDAGHash(t *testing.T) {

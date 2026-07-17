@@ -49,6 +49,21 @@ func TestExecutionReplayRequestStore(t *testing.T) {
 		t.Fatalf("updated replay payload = %q, want %q", got, updated)
 	}
 
+	if err := store.UpsertExecutionReplayRequest(ctx, job.ID, "   "); err != nil {
+		t.Fatalf("empty replay payload should be ignored: %v", err)
+	}
+	got, err = store.GetExecutionReplayRequest(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("GetExecutionReplayRequest after empty update: %v", err)
+	}
+	if got != updated {
+		t.Fatalf("empty replay update cleared the stored payload: got %q, want %q", got, updated)
+	}
+
+	if err := store.UpsertExecutionReplayRequest(ctx, "   ", updated); err == nil {
+		t.Fatal("empty job ID should be rejected")
+	}
+
 	missing, err := store.GetExecutionReplayRequest(ctx, "missing-job")
 	if err != nil {
 		t.Fatalf("GetExecutionReplayRequest missing failed: %v", err)

@@ -6,13 +6,27 @@ export interface WebSocketEvent {
   type: string;
   job_id?: string;
   node_id?: string;
-  sequence?: number;
+  snapshot_sequence?: number;
+  data?: {
+    sequence?: number;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}
+
+export interface WebSocketJobSnapshot {
+  id?: string;
+  status?: string;
+  snapshot_sequence?: number;
+  complete?: boolean;
+  nodes?: unknown[];
   [key: string]: unknown;
 }
 
 export interface WebSocketManagerCallbacks {
   onMessage: (event: WebSocketEvent) => void;
   onStateChange: (state: ConnectionState) => void;
+  onSnapshot?: (snapshot: WebSocketJobSnapshot) => void;
   onReconnecting?: (attempt: number, maxAttempts: number) => void;
   onRecovered?: () => void;
 }
@@ -131,13 +145,22 @@ export class WebSocketManager {
       try {
         const data: WebSocketEvent = JSON.parse(event.data);
 
-        // Handle sequence-based deduplication
-        if (data.sequence !== undefined) {
-          if (data.sequence <= this.state.lastSequence) {
-            console.log('[WebSocketManager] Dropping duplicate event:', data.sequence);
+        // Persisted stream events carry their sequence in data.sequence. A
+        // snapshot has its own snapshot_sequence and must still be delivered,
+        // even when it describes the sequence we already reconciled through.
+        const sequence = data.data?.sequence;
+        if (typeof sequence === 'number' && Number.isFinite(sequence)) {
+          if (sequence <= this.state.lastSequence) {
+            console.log('[WebSocketManager] Dropping duplicate event:', sequence);
             return;
           }
-          this.state.lastSequence = data.sequence;
+          this.updateState({ lastSequence: sequence });
+        } else if (
+          data.type === 'snapshot' &&
+          typeof data.snapshot_sequence === 'number' &&
+          Number.isFinite(data.snapshot_sequence)
+        ) {
+          this.updateState({ lastSequence: Math.max(this.state.lastSequence, data.snapshot_sequence) });
         }
 
         this.callbacks.onMessage(data);
@@ -196,15 +219,20 @@ export class WebSocketManager {
         throw new Error(`HTTP ${response.status}`);
       }
 
-      const snapshot = await response.json();
+      const snapshot: WebSocketJobSnapshot = await response.json();
+
+      // Reconcile the UI before advancing resume_from. Otherwise the client
+      // can skip events represented by the snapshot without ever applying the
+      // corresponding node/job state.
+      this.callbacks.onSnapshot?.(snapshot);
 
       // Update lastSequence from snapshot
-      if (snapshot.snapshot_sequence !== undefined) {
-        this.state.lastSequence = snapshot.snapshot_sequence;
+      if (typeof snapshot.snapshot_sequence === 'number' && Number.isFinite(snapshot.snapshot_sequence)) {
+        this.updateState({ lastSequence: Math.max(this.state.lastSequence, snapshot.snapshot_sequence) });
       }
 
       // Check if job is already complete
-      if (snapshot.complete || ['completed', 'failed', 'cancelled'].includes(snapshot.status)) {
+      if (snapshot.complete || ['completed', 'failed', 'cancelled'].includes(snapshot.status ?? '')) {
         console.log('[WebSocketManager] Job already complete, no reconnect needed');
         this.updateState({ status: 'disconnected' });
         return;

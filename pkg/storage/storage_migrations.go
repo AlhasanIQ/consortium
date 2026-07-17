@@ -12,6 +12,9 @@ import (
 )
 
 func (s *Storage) runStartupMigrations() error {
+	if err := s.ensureUserScopedJobIdempotency(); err != nil {
+		return err
+	}
 	if err := s.ensureWorkflowVersionColumn(); err != nil {
 		return err
 	}
@@ -44,6 +47,29 @@ func (s *Storage) runStartupMigrations() error {
 	}
 	if err := s.backfillWorkflowDefinitionsWithExplicitDefaults(); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (s *Storage) ensureUserScopedJobIdempotency() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin user-scoped job idempotency migration: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	if _, err := tx.Exec(`DROP INDEX IF EXISTS idx_jobs_idempotency_key`); err != nil {
+		return fmt.Errorf("drop legacy global job idempotency index: %w", err)
+	}
+	if _, err := tx.Exec(`
+		CREATE UNIQUE INDEX idx_jobs_idempotency_key
+		ON jobs(COALESCE(user_id, ''), idempotency_key)
+		WHERE idempotency_key IS NOT NULL
+	`); err != nil {
+		return fmt.Errorf("create user-scoped job idempotency index: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit user-scoped job idempotency migration: %w", err)
 	}
 	return nil
 }

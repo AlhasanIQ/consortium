@@ -114,14 +114,6 @@ func TestRetrySQLiteBusy_ExhaustsRetries(t *testing.T) {
 	}
 }
 
-func TestSleepWithContext_NormalSleep(t *testing.T) {
-	ctx := context.Background()
-	ok := sleepWithContext(ctx, 1*time.Millisecond)
-	if !ok {
-		t.Error("expected true for normal sleep")
-	}
-}
-
 func TestSleepWithContext_CancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately

@@ -51,6 +51,29 @@ export interface AgentState {
   error?: string;
 }
 
+export interface EnsembleJobSnapshotNode {
+  node_id: string;
+  node_type?: string;
+  status?: string;
+  output?: string;
+  error_message?: string;
+  latency_ms?: number;
+  cost?: number;
+  tokens_input?: number;
+  tokens_output?: number;
+}
+
+export interface EnsembleJobSnapshot {
+  id?: string;
+  status?: string;
+  result_text?: string;
+  error?: string;
+  error_message?: string;
+  cost?: number;
+  tokens_total?: number;
+  nodes?: EnsembleJobSnapshotNode[];
+}
+
 export interface FlowParticle {
   id: string;
   fromCenter: boolean; // true = center->agent, false = agent->center
@@ -134,6 +157,7 @@ export interface EnsembleState {
   appendAgentStream: (agentId: string, chunk: string, tokens?: number) => void;
   completeAgent: (agentId: string, output: string, latencyMs: number, cost: number, tokens?: number) => void;
   failAgent: (agentId: string, error: string) => void;
+  applyJobSnapshot: (snapshot: EnsembleJobSnapshot, jobId: string, aggregationMethod?: AggregationMethod) => void;
 
   // Aggregation actions (generalized from synthesis)
   startAggregation: (method?: AggregationMethod) => void;
@@ -228,6 +252,32 @@ const getDisplayName = (model: string): string => {
   // Capitalize first letter and limit length
   return modelName.charAt(0).toUpperCase() + modelName.slice(1, 11);
 };
+
+function isResultSnapshotNode(node: EnsembleJobSnapshotNode): boolean {
+  return (
+    node.node_type === 'result' ||
+    node.node_id === 'synthesize' ||
+    node.node_id.startsWith('result') ||
+    node.node_id.includes('-result')
+  );
+}
+
+function snapshotNodeForAgent(
+  nodes: EnsembleJobSnapshotNode[],
+  agent: AgentState,
+): EnsembleJobSnapshotNode | undefined {
+  return nodes.find((node) => {
+    if (isResultSnapshotNode(node)) return false;
+    if (node.node_id === agent.id) return true;
+
+    const normalized = node.node_id.toLowerCase();
+    if (normalized.includes(agent.displayName.toLowerCase())) return true;
+
+    const modelLower = agent.model.toLowerCase();
+    const modelName = modelLower.split('/').pop() || '';
+    return modelLower.includes(normalized) || (modelName !== '' && normalized.includes(modelName));
+  });
+}
 
 // Default agents - must match workflow IDs for proper node_id matching
 // These are fallbacks if workflow fails to load from API
@@ -417,6 +467,138 @@ export const useEnsembleStore = create<EnsembleState>((set, get) => ({
   failAgent: (agentId, error) => {
     const agents = get().agents.map((a) => (a.id === agentId ? { ...a, status: 'error' as AgentStatus, error } : a));
     set({ agents });
+  },
+
+  applyJobSnapshot: (snapshot, jobId, aggregationMethod = 'collect') => {
+    const state = get();
+    const status = (snapshot.status || '').trim().toLowerCase();
+    const nodes = Array.isArray(snapshot.nodes) ? snapshot.nodes : [];
+    const resultNode = nodes.find(isResultSnapshotNode);
+
+    const agents = state.agents.map((agent) => {
+      const node = snapshotNodeForAgent(nodes, agent);
+      if (!node) return agent;
+
+      const nodeStatus = (node.status || '').trim().toLowerCase();
+      const tokens = (node.tokens_input || 0) + (node.tokens_output || 0);
+      const metrics = {
+        output: node.output || '',
+        streamingText: node.output || '',
+        tokens,
+        cost: node.cost || 0,
+        latencyMs: node.latency_ms || 0,
+        error: undefined,
+      };
+
+      if (nodeStatus === 'completed') {
+        return { ...agent, ...metrics, status: 'done' as AgentStatus };
+      }
+      if (nodeStatus === 'failed' || nodeStatus === 'cancelled') {
+        return {
+          ...agent,
+          ...metrics,
+          status: 'error' as AgentStatus,
+          error: node.error_message || 'Node failed',
+        };
+      }
+      if (nodeStatus === 'running') {
+        return { ...agent, ...metrics, status: 'thinking' as AgentStatus };
+      }
+      if (nodeStatus === 'pending') {
+        return { ...agent, ...metrics, status: 'receiving' as AgentStatus };
+      }
+      return agent;
+    });
+
+    const derivedCost = agents.reduce((sum, agent) => sum + agent.cost, 0);
+    const derivedTokens = agents.reduce((sum, agent) => sum + agent.tokens, 0);
+    const completedLatencies = agents.filter((agent) => agent.status === 'done').map((agent) => agent.latencyMs);
+    const totalCost = typeof snapshot.cost === 'number' ? snapshot.cost : derivedCost;
+    const totalTokens = typeof snapshot.tokens_total === 'number' ? snapshot.tokens_total : derivedTokens;
+    const totalLatency = completedLatencies.length > 0 ? Math.max(...completedLatencies) : 0;
+    const resultStatus = (resultNode?.status || '').trim().toLowerCase();
+    const finalOutput = resultNode?.output || snapshot.result_text || '';
+
+    if (status === 'completed') {
+      const existing = state.history.find((entry) => entry.jobId === jobId);
+      const historyEntry: HistoryEntry = {
+        id: existing?.id || `history-${Date.now()}`,
+        jobId,
+        prompt: existing?.prompt || state.prompt,
+        synthesizedResponse: finalOutput,
+        timestamp: existing?.timestamp || new Date(),
+        totalCost,
+        totalTokens,
+        totalLatency,
+        status: 'completed',
+        aggregationMethod: existing?.aggregationMethod || aggregationMethod,
+        aggregationDetails: existing?.aggregationDetails,
+      };
+      const history = existing
+        ? state.history.map((entry) => (entry.jobId === jobId ? historyEntry : entry))
+        : [historyEntry, ...state.history].slice(0, 20);
+
+      set({
+        agents,
+        jobId,
+        executionState: { status: 'complete', jobId },
+        isExecuting: false,
+        isAggregating: false,
+        aggregationMethod: null,
+        phase: 'complete',
+        synthesisStreaming: '',
+        totalCost,
+        totalTokens,
+        totalLatency,
+        history,
+      });
+      return;
+    }
+
+    if (status === 'failed') {
+      set({
+        agents,
+        jobId,
+        executionState: {
+          status: 'error',
+          message: snapshot.error_message || snapshot.error || 'Workflow failed',
+          jobId,
+        },
+        isExecuting: false,
+        isAggregating: false,
+        phase: 'idle',
+        totalCost,
+        totalTokens,
+        totalLatency,
+      });
+      return;
+    }
+
+    if (status === 'cancelled') {
+      set({
+        agents,
+        jobId,
+        executionState: { status: 'cancelled', jobId },
+        isExecuting: false,
+        isAggregating: false,
+        phase: 'idle',
+        totalCost,
+        totalTokens,
+        totalLatency,
+      });
+      return;
+    }
+
+    set({
+      agents,
+      jobId,
+      isExecuting: true,
+      isAggregating: resultStatus === 'running',
+      phase: resultStatus === 'running' ? 'aggregating' : 'thinking',
+      totalCost,
+      totalTokens,
+      totalLatency,
+    });
   },
 
   // Aggregation actions (generalized from synthesis)

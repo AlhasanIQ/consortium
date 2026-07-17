@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -199,6 +200,70 @@ func TestClaimPendingDurableRootAndChildJobs(t *testing.T) {
 	}
 }
 
+func TestClaimPendingDurableJob_ConcurrentClaimsEachJobOnce(t *testing.T) {
+	store, err := NewStorage(":memory:")
+	if err != nil {
+		t.Fatalf("new storage failed: %v", err)
+	}
+	defer store.Close()
+
+	const jobCount = 8
+	base := time.Date(2026, time.May, 1, 0, 0, 0, 0, time.UTC)
+	for i := 0; i < jobCount; i++ {
+		createQueueStoreTestExecution(t, store, "claim-concurrent-"+string(rune('a'+i)), "pending", "hash-concurrent", base.Add(time.Duration(i)*time.Minute))
+	}
+
+	start := make(chan struct{})
+	results := make(chan *WorkflowExecution, jobCount)
+	errCh := make(chan error, jobCount)
+	var wg sync.WaitGroup
+	for i := 0; i < jobCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			claimed, err := store.ClaimPendingDurableJob(context.Background())
+			if err != nil {
+				errCh <- err
+				return
+			}
+			results <- claimed
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+	close(errCh)
+
+	for err := range errCh {
+		t.Fatalf("concurrent claim failed: %v", err)
+	}
+	seen := make(map[string]bool, jobCount)
+	for claimed := range results {
+		if claimed == nil {
+			t.Fatal("concurrent claim returned nil while durable jobs remained")
+		}
+		if claimed.Status != "running" {
+			t.Errorf("claimed job %s status = %q, want running", claimed.ID, claimed.Status)
+		}
+		if seen[claimed.ID] {
+			t.Errorf("job %s was claimed more than once", claimed.ID)
+		}
+		seen[claimed.ID] = true
+	}
+	if len(seen) != jobCount {
+		t.Fatalf("claimed %d unique jobs, want %d", len(seen), jobCount)
+	}
+
+	pending, err := store.CountPendingDurableJobs(context.Background())
+	if err != nil {
+		t.Fatalf("CountPendingDurableJobs after concurrent claims: %v", err)
+	}
+	if pending != 0 {
+		t.Fatalf("pending durable jobs after claiming each worker once = %d, want 0", pending)
+	}
+}
+
 func TestDurableQueueQueryPlansUseQueueIndexes(t *testing.T) {
 	store, err := NewStorage(":memory:")
 	if err != nil {
@@ -209,16 +274,19 @@ func TestDurableQueueQueryPlansUseQueueIndexes(t *testing.T) {
 	cases := []struct {
 		name      string
 		query     string
+		args      []interface{}
 		wantIndex string
 	}{
 		{
 			name:      "pending root claim",
-			query:     pendingDurableJobSelectSQL(durableQueueScopeRoot),
+			query:     pendingDurableJobClaimSQL(durableQueueScopeRoot),
+			args:      []interface{}{time.Now()},
 			wantIndex: "idx_jobs_pending_durable_root_created",
 		},
 		{
 			name:      "pending child claim",
-			query:     pendingDurableJobSelectSQL(durableQueueScopeChild),
+			query:     pendingDurableJobClaimSQL(durableQueueScopeChild),
+			args:      []interface{}{time.Now()},
 			wantIndex: "idx_jobs_pending_durable_child_created",
 		},
 		{
@@ -230,7 +298,7 @@ func TestDurableQueueQueryPlansUseQueueIndexes(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			plan := explainQueryPlan(t, store.db, tc.query)
+			plan := explainQueryPlan(t, store.db, tc.query, tc.args...)
 			if !strings.Contains(plan, tc.wantIndex) {
 				t.Fatalf("expected plan to use %s, got:\n%s", tc.wantIndex, plan)
 			}

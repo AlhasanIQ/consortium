@@ -52,6 +52,57 @@ func TestConditionValidationMatchesEvaluation(t *testing.T) {
 	}
 }
 
+func TestConditionValidationMatchesEvaluationResult(t *testing.T) {
+	v := NewValidator(nil)
+	ctx := map[string]interface{}{
+		"score": 20,
+		"left":  "",
+		"right": "available",
+	}
+
+	tests := []struct {
+		name      string
+		expr      string
+		wantValue bool
+	}{
+		{
+			name:      "and binds tighter than or and both sides are evaluated",
+			expr:      "left not_empty OR right not_empty AND score > 30",
+			wantValue: false,
+		},
+		{
+			name:      "and branch makes compound expression true",
+			expr:      "left not_empty OR right not_empty AND score > 10",
+			wantValue: true,
+		},
+		{
+			name:      "boolean keywords are case insensitive",
+			expr:      "left not_empty or right not_empty",
+			wantValue: true,
+		},
+		{
+			name:      "not negates a compound expression",
+			expr:      "NOT left not_empty OR right not_empty",
+			wantValue: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if errs := v.validateConditionExpression(tt.expr, "condition"); len(errs) > 0 {
+				t.Fatalf("validation rejected evaluable expression: %+v", errs)
+			}
+			got, err := EvaluateConditionExpression(tt.expr, ctx)
+			if err != nil {
+				t.Fatalf("evaluation failed: %v", err)
+			}
+			if got != tt.wantValue {
+				t.Fatalf("evaluation = %v, want %v", got, tt.wantValue)
+			}
+		})
+	}
+}
+
 func TestExtractConditionVariablesHandlesCompoundExpressions(t *testing.T) {
 	got := extractConditionVariables("NOT a is_empty AND b contains foo OR c >= 2")
 	want := []string{"a", "b", "c"}

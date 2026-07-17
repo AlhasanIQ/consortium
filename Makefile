@@ -420,19 +420,38 @@ build-release: frontend-precompress
 	@du -sh $(RELEASE_BIN)
 	@echo ""
 	@echo "Verifying binary..."
-	@OPENROUTER_API_KEY="$${OPENROUTER_API_KEY:-release-build-placeholder}" PORT=$(VERIFY_PORT) BIND_ADDR=127.0.0.1:$(VERIFY_PORT) EMBED_FRONTEND=true $(RELEASE_BIN) > /dev/null 2>&1 & echo $$! > .release-verify.pid
-	@sleep 3
-	@echo ""
-	@echo "=== Health Check ==="
-	@curl -s $(VERIFY_URL)/health && echo " OK" || echo " FAILED"
-	@echo ""
-	@echo "=== Frontend Check ==="
-	@curl -s -o /dev/null -w "Status: %{http_code}, Size: %{size_download} bytes\n" $(VERIFY_URL)/ || echo "Frontend check failed"
-	@echo ""
-	@echo "=== Cache Headers (index.html) ==="
-	@curl -sI $(VERIFY_URL)/ | grep -i cache-control || echo "No cache headers"
-	@echo ""
-	@if [ -f .release-verify.pid ]; then kill $$(cat .release-verify.pid) 2>/dev/null || true; rm -f .release-verify.pid; fi
+	@set -eu; \
+		log_file=.release-verify.log; \
+		pid_file=.release-verify.pid; \
+		body_file=$$(mktemp); \
+		header_file=$$(mktemp); \
+		cleanup() { \
+			if [ -f "$$pid_file" ]; then kill $$(cat "$$pid_file") 2>/dev/null || true; fi; \
+			rm -f "$$pid_file" "$$log_file" "$$body_file" "$$header_file"; \
+		}; \
+		trap cleanup EXIT INT TERM; \
+		OPENROUTER_API_KEY="$${OPENROUTER_API_KEY:-release-build-placeholder}" PORT=$(VERIFY_PORT) BIND_ADDR=127.0.0.1:$(VERIFY_PORT) EMBED_FRONTEND=true $(RELEASE_BIN) > "$$log_file" 2>&1 & \
+		pid=$$!; \
+		echo $$pid > "$$pid_file"; \
+		ready=false; \
+		i=0; \
+		while [ $$i -lt 40 ]; do \
+			if curl -fsS $(VERIFY_URL)/health > "$$body_file" 2>/dev/null; then ready=true; break; fi; \
+			if ! kill -0 $$pid 2>/dev/null; then cat "$$log_file"; echo "release binary exited before becoming healthy"; exit 1; fi; \
+			i=$$((i + 1)); \
+			sleep 0.25; \
+		done; \
+		if [ "$$ready" != true ]; then cat "$$log_file"; echo "release binary did not become healthy"; exit 1; fi; \
+		[ "$$(cat "$$body_file")" = "OK" ] || { echo "unexpected /health body"; exit 1; }; \
+		curl -fsS -D "$$header_file" -o "$$body_file" $(VERIFY_URL)/; \
+		grep -q '<div id="root"' "$$body_file" || { echo "embedded frontend root missing"; exit 1; }; \
+		grep -qi '^cache-control:' "$$header_file" || { echo "frontend cache header missing"; exit 1; }; \
+		asset=$$(grep -Eo '(src|href)="/assets/[^"]+"' "$$body_file" | head -n 1 | cut -d '"' -f 2); \
+		[ -n "$$asset" ] || { echo "embedded frontend asset reference missing"; exit 1; }; \
+		curl -fsS -o /dev/null "$(VERIFY_URL)$$asset"; \
+		status=$$(curl -sS -o /dev/null -w '%{http_code}' $(VERIFY_URL)/v1/models); \
+		[ "$$status" = "401" ] || { echo "unauthenticated /v1/models returned $$status, want 401"; exit 1; }; \
+		echo "Health, embedded frontend asset, cache header, and /v1 auth checks passed"
 	@echo "✅ Release binary built and verified"
 
 ## release-audit: Check tracked files for known publication blockers

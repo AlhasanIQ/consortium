@@ -118,6 +118,15 @@ describe('enrichNodesWithChildJobIDs', () => {
     expect(enriched[1].ChildJobID).toBeUndefined();
     expect(enriched[2].ChildJobID).toBe('job-2');
   });
+
+  it('preserves existing IDs while assigning remaining child jobs', () => {
+    const nodes = [childNode('child-a'), childNode('child-b', 'existing-job'), childNode('child-c')];
+    const jobs = [childJob('job-1'), childJob('job-3')];
+
+    const enriched = enrichNodesWithChildJobIDs(nodes, jobs);
+
+    expect(enriched.map((node) => node.ChildJobID)).toEqual(['job-1', 'existing-job', 'job-3']);
+  });
 });
 
 describe('canStopAgentRun', () => {
@@ -190,5 +199,30 @@ describe('adminActionErrorMessage', () => {
     const err = { response: { status: 409, data: { error: 'not_stoppable' } } };
 
     expect(adminActionErrorMessage(err)).toBe('This external run is already finished or cannot be stopped.');
+  });
+
+  it.each([
+    [
+      'a 404 without API text',
+      { response: { status: 404, data: {} } },
+      'This external run is no longer available.',
+    ],
+    [
+      'a 409 with a different API error',
+      { response: { status: 409, data: { error: 'run_locked' } } },
+      'run_locked',
+    ],
+    [
+      'a response without an API error',
+      { response: { status: 500, data: {} } },
+      'Failed to stop the external run.',
+    ],
+  ])('maps %s to stable operator text', (_caseName, error, expected) => {
+    expect(adminActionErrorMessage(error)).toBe(expected);
+  });
+
+  it('uses a network error message when there is no response', () => {
+    expect(adminActionErrorMessage(new Error('network offline'))).toBe('network offline');
+    expect(adminActionErrorMessage({ code: 'ECONNREFUSED' })).toBe('Could not reach the Consortium admin API.');
   });
 });

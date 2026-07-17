@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -117,16 +118,200 @@ func TestMigrationsApplyCleanly(t *testing.T) {
 }
 
 func TestMigrationsIdempotent(t *testing.T) {
-	// Running migrations twice should not fail (idempotency).
 	store, err := NewStorage(":memory:")
 	if err != nil {
 		t.Fatalf("NewStorage(:memory:) failed: %v", err)
 	}
 	defer store.Close()
 
-	// Run migrations again manually — they should be no-ops.
+	if err := store.CreateWorkflow(&WorkflowDefinition{
+		ID:         "migration-idempotent",
+		Name:       "Migration Idempotent",
+		Definition: `{"nodes":[{"data":{"type":"prompt","config":{}}}]}`,
+	}); err != nil {
+		t.Fatalf("CreateWorkflow: %v", err)
+	}
+	if err := store.runStartupMigrations(); err != nil {
+		t.Fatalf("first runStartupMigrations() failed: %v", err)
+	}
+
+	first, err := store.GetWorkflow("migration-idempotent")
+	if err != nil {
+		t.Fatalf("GetWorkflow after first migration: %v", err)
+	}
+	if first.Version != 2 {
+		t.Fatalf("workflow version after legacy-default backfill = %d, want 2", first.Version)
+	}
+
 	if err := store.runStartupMigrations(); err != nil {
 		t.Fatalf("second runStartupMigrations() failed: %v", err)
+	}
+	second, err := store.GetWorkflow("migration-idempotent")
+	if err != nil {
+		t.Fatalf("GetWorkflow after second migration: %v", err)
+	}
+	if second.Version != first.Version || second.Definition != first.Definition {
+		t.Fatalf("second migration changed an already migrated workflow: first version/definition=(%d,%s), second=(%d,%s)", first.Version, first.Definition, second.Version, second.Definition)
+	}
+}
+
+func TestStartupMigrationsUpgradeLegacyTablesAndBackfillRows(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	legacySchema := []string{
+		`CREATE TABLE workflows (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			description TEXT,
+			definition TEXT NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE optimization_runs (
+			id TEXT PRIMARY KEY,
+			workflow_id TEXT NOT NULL,
+			benchmark TEXT NOT NULL,
+			split TEXT NOT NULL,
+			status TEXT NOT NULL,
+			last_heartbeat_at DATETIME,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE benchmark_runs (
+			id TEXT PRIMARY KEY,
+			benchmark TEXT NOT NULL,
+			split TEXT NOT NULL,
+			workflow_id TEXT NOT NULL,
+			workflow_name TEXT NOT NULL DEFAULT '',
+			dataset_path TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL,
+			total_items INTEGER DEFAULT 0,
+			started_at DATETIME,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			source TEXT NOT NULL DEFAULT 'manual'
+		)`,
+		`CREATE TABLE agent_runs (
+			id TEXT PRIMARY KEY,
+			job_id TEXT NOT NULL,
+			execution_id TEXT NOT NULL,
+			run_id TEXT NOT NULL,
+			node_id TEXT NOT NULL,
+			attempt INTEGER NOT NULL DEFAULT 1,
+			run_kind TEXT NOT NULL DEFAULT 'agent_run',
+			external_run_id TEXT NOT NULL,
+			external_task_id TEXT,
+			harness TEXT NOT NULL,
+			status TEXT NOT NULL,
+			output TEXT,
+			tokens_input INTEGER DEFAULT 0,
+			tokens_output INTEGER DEFAULT 0,
+			cost_usd REAL DEFAULT 0.0,
+			error_code TEXT,
+			error_message TEXT,
+			started_at DATETIME,
+			finished_at DATETIME,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(job_id, run_id, node_id, attempt)
+		)`,
+	}
+	for _, statement := range legacySchema {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatalf("create legacy table: %v", err)
+		}
+	}
+	if _, err := db.Exec(schema); err != nil {
+		t.Fatalf("schema should coexist with legacy tables: %v", err)
+	}
+
+	if _, err := db.Exec(`
+		INSERT INTO workflows (id, name, definition) VALUES (?, ?, ?)
+	`, "legacy-workflow", "Legacy workflow", `{"nodes":[{"data":{"type":"prompt","config":{}}}]}`); err != nil {
+		t.Fatalf("insert legacy workflow: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO optimization_runs (id, workflow_id, benchmark, split, status)
+		VALUES ('legacy-opt', 'legacy-workflow', 'mmlu', 'dev', 'pending')
+	`); err != nil {
+		t.Fatalf("insert legacy optimization run: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO benchmark_runs (id, benchmark, split, workflow_id, status, total_items, source)
+		VALUES ('legacy-bench', 'mmlu', 'dev', 'legacy-workflow', 'completed', 2, 'backend')
+	`); err != nil {
+		t.Fatalf("insert legacy benchmark run: %v", err)
+	}
+
+	store := &Storage{db: db}
+	if err := store.runStartupMigrations(); err != nil {
+		t.Fatalf("runStartupMigrations: %v", err)
+	}
+
+	for _, column := range []struct {
+		table  string
+		column string
+	}{
+		{table: "workflows", column: "version"},
+		{table: "optimization_runs", column: "workflow_version"},
+		{table: "optimization_runs", column: "children_per_parent"},
+		{table: "optimization_runs", column: "max_children_per_generation"},
+		{table: "optimization_runs", column: "adaptive_fanout"},
+		{table: "optimization_runs", column: "mutator_mode"},
+		{table: "optimization_runs", column: "rng_seed"},
+		{table: "optimization_runs", column: "compact_artifacts"},
+		{table: "optimization_runs", column: "dspy_metric_calls_used"},
+		{table: "benchmark_runs", column: "item_limit"},
+		{table: "benchmark_runs", column: "opt_run_id"},
+		{table: "benchmark_runs", column: "opt_organism_id"},
+		{table: "agent_runs", column: "external_job_run_id"},
+		{table: "agent_runs", column: "inherit_from_json"},
+	} {
+		has, err := tableHasColumn(db, column.table, column.column)
+		if err != nil {
+			t.Fatalf("tableHasColumn(%s.%s): %v", column.table, column.column, err)
+		}
+		if !has {
+			t.Fatalf("legacy migration did not add %s.%s", column.table, column.column)
+		}
+	}
+
+	workflow, err := store.GetWorkflow("legacy-workflow")
+	if err != nil {
+		t.Fatalf("GetWorkflow after migration: %v", err)
+	}
+	var definition map[string]interface{}
+	if err := json.Unmarshal([]byte(workflow.Definition), &definition); err != nil {
+		t.Fatalf("migrated workflow definition is invalid JSON: %v", err)
+	}
+	nodes, ok := definition["nodes"].([]interface{})
+	if !ok || len(nodes) != 1 {
+		t.Fatalf("migrated workflow nodes = %#v, want one node", definition["nodes"])
+	}
+	node, ok := nodes[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("migrated workflow node = %#v, want object", nodes[0])
+	}
+	data, ok := node["data"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("migrated workflow data = %#v, want object", node["data"])
+	}
+	config, ok := data["config"].(map[string]interface{})
+	if !ok || config["retryPolicy"] == nil || config["maxTokens"] == nil {
+		t.Fatalf("legacy workflow defaults were not backfilled: %#v", config)
+	}
+
+	var source string
+	var itemLimit int
+	if err := db.QueryRow(`SELECT source, item_limit FROM benchmark_runs WHERE id = 'legacy-bench'`).Scan(&source, &itemLimit); err != nil {
+		t.Fatalf("read migrated benchmark run: %v", err)
+	}
+	if source != "manual" || itemLimit != 2 {
+		t.Fatalf("migrated benchmark metadata = source %q, item_limit %d; want manual, 2", source, itemLimit)
 	}
 }
 

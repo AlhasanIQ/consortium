@@ -313,6 +313,36 @@ func TestAppendHistoryEventBatch(t *testing.T) {
 	})
 }
 
+func TestAppendHistoryEventBatch_RollsBackOnLaterEventFailure(t *testing.T) {
+	store, err := NewStorage(":memory:")
+	if err != nil {
+		t.Fatalf("new storage failed: %v", err)
+	}
+	defer store.Close()
+
+	events := []*HistoryEvent{
+		{RunID: "atomic-batch", Type: "workflow_started"},
+		{
+			RunID: "atomic-batch",
+			Type:  "activity_started",
+			Attributes: map[string]interface{}{
+				"unmarshalable": make(chan int),
+			},
+		},
+	}
+	if err := store.AppendHistoryEventBatch(context.Background(), events); err == nil {
+		t.Fatal("AppendHistoryEventBatch accepted an event with unmarshalable attributes")
+	}
+
+	stored, err := store.GetHistoryEvents(context.Background(), "atomic-batch")
+	if err != nil {
+		t.Fatalf("GetHistoryEvents after failed batch: %v", err)
+	}
+	if len(stored) != 0 {
+		t.Fatalf("failed batch partially persisted %d event(s): %+v", len(stored), stored)
+	}
+}
+
 func TestRetryHistoryBatch(t *testing.T) {
 	t.Run("retries transient begin transaction errors", func(t *testing.T) {
 		attempts := 0

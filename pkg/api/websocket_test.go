@@ -29,8 +29,6 @@ func TestWebSocketMessageSending(t *testing.T) {
 		}
 		api.sendMessage(conn, msg)
 
-		// Keep connection alive briefly
-		time.Sleep(100 * time.Millisecond)
 	}))
 	defer server.Close()
 
@@ -59,14 +57,15 @@ func TestWebSocketMessageSending(t *testing.T) {
 }
 
 func TestWebSocketMessageSending_ClosedConnectionReturnsError(t *testing.T) {
-	// Create a server that upgrades and keeps the socket briefly alive.
+	serverReady := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer conn.Close()
-		time.Sleep(300 * time.Millisecond)
+		close(serverReady)
+		_, _, _ = conn.ReadMessage()
 	}))
 	defer server.Close()
 
@@ -75,6 +74,7 @@ func TestWebSocketMessageSending_ClosedConnectionReturnsError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	<-serverReady
 
 	// Close client-side conn, then sending should fail.
 	if err := conn.Close(); err != nil {

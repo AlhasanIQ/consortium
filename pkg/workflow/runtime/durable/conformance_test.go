@@ -122,23 +122,12 @@ func TestConformance_TimeoutEnforcement(t *testing.T) {
 		t.Errorf("expected 3s from config, got %v", d)
 	}
 
-	// Verify a short timeout actually causes context deadline exceeded.
-	timeout := runtime.EffectiveStartToClose(nil, 1) // 1 second
+	// Verify an effective timeout is observable without waiting for a wall-clock second.
+	timeout := runtime.EffectiveStartToClose(&runtime.ActivityTimeoutConfig{StartToClose: time.Nanosecond}, 999)
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-
-	// Simulate a long-running activity.
-	done := make(chan error, 1)
-	go func() {
-		select {
-		case <-ctx.Done():
-			done <- ctx.Err()
-		case <-time.After(5 * time.Second):
-			done <- nil
-		}
-	}()
-
-	err := <-done
+	<-ctx.Done()
+	err := ctx.Err()
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("expected context.DeadlineExceeded, got %v", err)
 	}

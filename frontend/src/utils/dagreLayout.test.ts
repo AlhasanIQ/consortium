@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import type { Edge, Node } from '@xyflow/react';
 import type { NodeData } from '../types/workflow';
-import { layoutWorkflowNodesTopToBottom } from './dagreLayout';
+import { layoutWorkflowNodesTopToBottom, workflowNodeLayoutSize } from './dagreLayout';
 
 function node(id: string, type: NodeData['type'] = 'agent'): Node<NodeData> {
   return {
@@ -53,5 +53,17 @@ describe('layoutWorkflowNodesTopToBottom', () => {
         .sort((left, right) => String(left[0]).localeCompare(String(right[0])));
 
     expect(positions(second)).toEqual(positions(first));
+  });
+
+  it('uses measured dimensions before style and type defaults', () => {
+    const measured = node('measured');
+    measured.measured = { width: 640, height: 312 };
+    measured.style = { width: '320', height: '160' };
+
+    expect(workflowNodeLayoutSize(measured)).toEqual({ width: 640, height: 312 });
+
+    const styled = node('styled');
+    styled.style = { width: '320', height: '160' };
+    expect(workflowNodeLayoutSize(styled)).toEqual({ width: 320, height: 160 });
   });
 });

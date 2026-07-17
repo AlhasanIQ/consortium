@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"database/sql"
+	"errors"
 	"testing"
 )
 
@@ -79,5 +81,80 @@ func TestMigrationSafety_NullDurableFields(t *testing.T) {
 	}
 	if retrieved.DAGHash != "" {
 		t.Errorf("Expected empty dag_hash, got %s", retrieved.DAGHash)
+	}
+
+	var workflowExecutionID, runID, dagSnapshot, dagHash sql.NullString
+	if err := store.DB().QueryRow(`
+		SELECT workflow_execution_id, run_id, dag_snapshot, dag_hash
+		FROM jobs WHERE id = ?
+	`, "legacy-1").Scan(&workflowExecutionID, &runID, &dagSnapshot, &dagHash); err != nil {
+		t.Fatalf("query nullable durable columns: %v", err)
+	}
+	for name, value := range map[string]sql.NullString{
+		"workflow_execution_id": workflowExecutionID,
+		"run_id":                runID,
+		"dag_snapshot":          dagSnapshot,
+		"dag_hash":              dagHash,
+	} {
+		if value.Valid {
+			t.Errorf("%s persisted as %q; expected SQL NULL for an empty legacy field", name, value.String)
+		}
+	}
+}
+
+func TestCreateExecutionRejectsPartialDurableFields(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*WorkflowExecution)
+	}{
+		{
+			name: "workflow execution id only",
+			mutate: func(exec *WorkflowExecution) {
+				exec.WorkflowExecutionID = "logical-1"
+			},
+		},
+		{
+			name: "run id only",
+			mutate: func(exec *WorkflowExecution) {
+				exec.RunID = "run-1"
+			},
+		},
+		{
+			name: "dag snapshot only",
+			mutate: func(exec *WorkflowExecution) {
+				exec.DAGSnapshot = `{"nodes":[]}`
+			},
+		},
+		{
+			name: "dag hash only",
+			mutate: func(exec *WorkflowExecution) {
+				exec.DAGHash = "hash-1"
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store, err := NewStorage(":memory:")
+			if err != nil {
+				t.Fatalf("NewStorage: %v", err)
+			}
+			defer store.Close()
+
+			exec := &WorkflowExecution{
+				ID:          "partial-durable",
+				Description: "invalid durable execution",
+				Model:       "workflow",
+				Status:      "pending",
+			}
+			tt.mutate(exec)
+			if err := store.CreateExecution(exec); err == nil {
+				t.Fatal("CreateExecution accepted a partial durable field set")
+			}
+
+			if _, err := store.GetExecution(exec.ID); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("partial durable execution remained persisted: %v", err)
+			}
+		})
 	}
 }

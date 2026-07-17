@@ -193,6 +193,8 @@ type dispatchRequest struct {
 func (r *DAGRuntime) dispatchAndCollect(ctx context.Context, req *dispatchRequest) (int, error) {
 	params := req.params
 	nodeIndex := req.nodeIndex
+	batchCtx, cancelBatch := context.WithCancel(ctx)
+	defer cancelBatch()
 
 	var wg sync.WaitGroup
 	resultCh := make(chan *activityResult, len(req.ready))
@@ -286,7 +288,7 @@ dispatchLoop:
 		go func(nID string, n *workflow.Node, aID string, att int, idx int, wfCtx map[string]interface{}, startedAt time.Time) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			output := r.executeActivity(ctx, params, nID, n, aID, att, wfCtx)
+			output := r.executeActivity(batchCtx, params, nID, n, aID, att, wfCtx)
 			resultCh <- &activityResult{
 				nodeID:     nID,
 				activityID: aID,
@@ -300,6 +302,9 @@ dispatchLoop:
 	}
 
 	if runtimeErr != nil {
+		cancelBatch()
+		wg.Wait()
+		r.markRunningNodesCancelled(req.jobID, req.runID)
 		return nodeIndex, runtimeErr
 	}
 
@@ -308,13 +313,23 @@ dispatchLoop:
 		close(resultCh)
 	}()
 
+	quiescing := false
 	for res := range resultCh {
+		// A terminal result already won this batch. Drain every launched activity so
+		// Start cannot return while sibling work is still running, but do not process
+		// sibling cancellation as another node/workflow failure.
+		if quiescing {
+			continue
+		}
+
 		// Cancellation takes precedence over node failure classification.
 		if ctx.Err() != nil {
 			runtimeErr = r.handleCancellation(params, req.state, req.jobID, req.runID, map[string]interface{}{
 				"reason": "context_cancelled",
 			})
-			break
+			quiescing = true
+			cancelBatch()
+			continue
 		}
 
 		var action resultAction
@@ -324,8 +339,15 @@ dispatchLoop:
 			action, runtimeErr = r.processActivityFailure(ctx, params, req.state, res, req.jobID, req.runID, req.totalNodes)
 		}
 		if action == resultBreak || action == resultAbort {
-			break
+			quiescing = true
+			cancelBatch()
 		}
+	}
+
+	if quiescing && req.state.Failed {
+		// The winning failure terminalized its own attempt. Any rows still marked
+		// running belong to siblings cancelled solely to quiesce this failed batch.
+		r.markRunningNodesCancelled(req.jobID, req.runID)
 	}
 
 	return nodeIndex, runtimeErr

@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/alhasaniq/consortium/pkg/providers"
 	"github.com/alhasaniq/consortium/pkg/storage"
@@ -453,7 +452,6 @@ func TestSmoke_JobListEndpoint(t *testing.T) {
 			Status:      "completed",
 		}
 		db.CreateExecution(job)
-		time.Sleep(5 * time.Millisecond) // Ensure different timestamps
 	}
 
 	req := httptest.NewRequest("GET", "/api/jobs?limit=2", nil)

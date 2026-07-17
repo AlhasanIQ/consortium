@@ -909,10 +909,11 @@ func TestValidateEdges(t *testing.T) {
 	validator := NewValidator(registry)
 
 	tests := []struct {
-		name        string
-		nodes       []*Node
-		edges       []*Edge
-		expectValid bool
+		name               string
+		nodes              []*Node
+		edges              []*Edge
+		expectValid        bool
+		expectErrorContain string
 	}{
 		{
 			name: "valid edges",
@@ -933,7 +934,8 @@ func TestValidateEdges(t *testing.T) {
 			edges: []*Edge{
 				{ID: "e1", Source: "nonexistent", Target: "step1"},
 			},
-			expectValid: false,
+			expectValid:        false,
+			expectErrorContain: "Edge source 'nonexistent' does not exist",
 		},
 		{
 			name: "edge with nonexistent target",
@@ -943,7 +945,8 @@ func TestValidateEdges(t *testing.T) {
 			edges: []*Edge{
 				{ID: "e1", Source: "step1", Target: "nonexistent"},
 			},
-			expectValid: false,
+			expectValid:        false,
+			expectErrorContain: "Edge target 'nonexistent' does not exist",
 		},
 	}
 
@@ -965,6 +968,71 @@ func TestValidateEdges(t *testing.T) {
 					t.Errorf("Expected validation to fail for %s", tt.name)
 				}
 			}
+			if tt.expectErrorContain != "" {
+				found := false
+				for _, err := range result.Errors {
+					if err.Field == "edges" && strings.Contains(err.Message, tt.expectErrorContain) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Fatalf("expected edge error containing %q, got %v", tt.expectErrorContain, result.Errors)
+				}
+			}
+		})
+	}
+}
+
+func TestValidateRejectsMalformedRetryPolicies(t *testing.T) {
+	tests := []struct {
+		name       string
+		policy     *RetryPolicy
+		wantPhrase string
+	}{
+		{
+			name:       "zero max attempts",
+			policy:     &RetryPolicy{MaxAttempts: 0},
+			wantPhrase: "max_attempts must be >= 1",
+		},
+		{
+			name:       "negative initial backoff",
+			policy:     &RetryPolicy{MaxAttempts: 1, BackoffMs: -1},
+			wantPhrase: "backoff_ms must be >= 0",
+		},
+		{
+			name:       "negative multiplier",
+			policy:     &RetryPolicy{MaxAttempts: 1, BackoffMultiply: -1},
+			wantPhrase: "backoff_multiply must be >= 0",
+		},
+		{
+			name:       "negative maximum backoff",
+			policy:     &RetryPolicy{MaxAttempts: 1, MaxBackoffMs: -1},
+			wantPhrase: "max_backoff_ms must be >= 0",
+		},
+	}
+
+	validator := NewValidator(nil)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			temp := 0.2
+			result := validator.Validate(&Workflow{
+				ID: "retry-validation",
+				Nodes: []*Node{{
+					ID:             "prompt",
+					Type:           NodeTypePrompt,
+					Model:          "mock-model",
+					Prompt:         "hello",
+					Temperature:    &temp,
+					MaxTokens:      128,
+					TimeoutSeconds: 30,
+					RetryPolicy:    tt.policy,
+				}},
+			})
+			if result.Valid {
+				t.Fatalf("malformed retry policy unexpectedly validated: %+v", tt.policy)
+			}
+			assertValidationErrorContains(t, result.Errors, "prompt", "retry_policy", tt.wantPhrase)
 		})
 	}
 }
@@ -1620,7 +1688,7 @@ func TestValidateVariables_ContractExtractSourceVariableReference(t *testing.T) 
 	found := false
 	for _, err := range result.Errors {
 		if err.Field == "source_variable" &&
-			strings.Contains(err.Message, "Source variable 'missing_source' not found in context or previous nodes") {
+			strings.Contains(err.Message, "Source variable 'missing_source' not found in context or dependency ancestors") {
 			found = true
 			break
 		}

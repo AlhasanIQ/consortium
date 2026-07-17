@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -108,6 +111,15 @@ func newTestStore(t *testing.T) *Storage {
 	}
 	t.Cleanup(func() { s.Close() })
 	return s
+}
+
+func setExecutionTimestamps(t *testing.T, store *Storage, id string, at time.Time) {
+	t.Helper()
+	if _, err := store.DB().Exec(`
+		UPDATE jobs SET created_at = ?, updated_at = ? WHERE id = ?
+	`, at, at, id); err != nil {
+		t.Fatalf("set timestamps for %s: %v", id, err)
+	}
 }
 
 func TestDBQueryDiagnosticsLogsWhenEnabled(t *testing.T) {
@@ -291,6 +303,63 @@ func TestCreateAndGetJob(t *testing.T) {
 	}
 }
 
+func TestFileBackedStoragePersistsAcrossReopen(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "consortium.db")
+
+	first, err := NewStorage(dbPath)
+	if err != nil {
+		t.Fatalf("NewStorage(first): %v", err)
+	}
+
+	job := &WorkflowExecution{
+		ID:          "reopen-job",
+		Description: "persisted job",
+		Model:       "workflow",
+		Status:      "completed",
+		ResultText:  "persisted result",
+	}
+	if err := first.CreateExecution(job); err != nil {
+		_ = first.Close()
+		t.Fatalf("CreateExecution: %v", err)
+	}
+	if err := first.CompleteExecution(job.ID, job.Status, job.ResultText, 0, 0, 0, 0, ""); err != nil {
+		_ = first.Close()
+		t.Fatalf("CompleteExecution: %v", err)
+	}
+	if err := first.AppendHistoryEvent(context.Background(), &HistoryEvent{
+		RunID: "reopen-run",
+		Type:  "workflow_completed",
+	}); err != nil {
+		_ = first.Close()
+		t.Fatalf("AppendHistoryEvent: %v", err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("Close(first): %v", err)
+	}
+
+	second, err := NewStorage(dbPath)
+	if err != nil {
+		t.Fatalf("NewStorage(second): %v", err)
+	}
+	defer second.Close()
+
+	got, err := second.GetExecution(job.ID)
+	if err != nil {
+		t.Fatalf("GetExecution after reopen: %v", err)
+	}
+	if got.Description != job.Description || got.Status != job.Status || got.ResultText != job.ResultText {
+		t.Fatalf("persisted execution = %+v, want description/status/result from before reopen", got)
+	}
+
+	events, err := second.GetHistoryEvents(context.Background(), "reopen-run")
+	if err != nil {
+		t.Fatalf("GetHistoryEvents after reopen: %v", err)
+	}
+	if len(events) != 1 || events[0].Type != "workflow_completed" || events[0].Sequence != 1 {
+		t.Fatalf("persisted history = %+v, want one workflow_completed event at sequence 1", events)
+	}
+}
+
 // TestGetNonExistentJob tests error handling for missing jobs
 func TestGetNonExistentJob(t *testing.T) {
 	store := newTestStore(t)
@@ -343,6 +412,7 @@ func TestUpdateJob(t *testing.T) {
 func TestListJobs(t *testing.T) {
 	store := newTestStore(t)
 
+	base := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
 	for i := 1; i <= 5; i++ {
 		job := &Job{
 			ID:          fmt.Sprintf("job-%d", i),
@@ -350,8 +420,10 @@ func TestListJobs(t *testing.T) {
 			Model:       "gpt-4",
 			Status:      "completed",
 		}
-		store.CreateExecution(job)
-		time.Sleep(time.Millisecond) // Ensure different timestamps
+		if err := store.CreateExecution(job); err != nil {
+			t.Fatalf("CreateExecution(%s): %v", job.ID, err)
+		}
+		setExecutionTimestamps(t, store, job.ID, base.Add(time.Duration(i)*time.Minute))
 	}
 
 	jobs, err := store.ListExecutions(3)
@@ -360,12 +432,11 @@ func TestListJobs(t *testing.T) {
 	}
 
 	if len(jobs) != 3 {
-		t.Errorf("Expected 3 jobs, got %d", len(jobs))
+		t.Fatalf("Expected 3 jobs, got %d", len(jobs))
 	}
 
-	// Verify order (most recent first)
-	if jobs[0].ID != "job-5" {
-		t.Errorf("Expected most recent job first, got %s", jobs[0].ID)
+	if got, want := []string{jobs[0].ID, jobs[1].ID, jobs[2].ID}, []string{"job-5", "job-4", "job-3"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("recent jobs = %v, want %v", got, want)
 	}
 }
 
@@ -671,27 +742,108 @@ func TestArchiveAndUnarchiveJob(t *testing.T) {
 func TestConcurrentAccess(t *testing.T) {
 	store := newTestStore(t)
 
-	done := make(chan bool)
-	for i := 0; i < 5; i++ {
+	const workers = 5
+	start := make(chan struct{})
+	errCh := make(chan error, workers)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
 		go func(id int) {
+			defer wg.Done()
+			<-start
 			job := &Job{
 				ID:          fmt.Sprintf("concurrent-%d", id),
 				Description: "Test",
 				Model:       "gpt-4",
 				Status:      "pending",
 			}
-			store.CreateExecution(job)
-			done <- true
+			if err := store.CreateExecution(job); err != nil {
+				errCh <- err
+			}
 		}(i)
 	}
-
-	for i := 0; i < 5; i++ {
-		<-done
+	close(start)
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Fatalf("concurrent CreateExecution failed: %v", err)
 	}
 
-	jobs, _ := store.ListExecutions(10)
-	if len(jobs) < 5 {
-		t.Errorf("Expected at least 5 jobs, got %d", len(jobs))
+	jobs, err := store.ListExecutions(10)
+	if err != nil {
+		t.Fatalf("ListExecutions: %v", err)
+	}
+	if len(jobs) != workers {
+		t.Fatalf("Expected exactly %d jobs, got %d", workers, len(jobs))
+	}
+	seen := make(map[string]bool, workers)
+	for _, job := range jobs {
+		seen[job.ID] = true
+	}
+	for i := 0; i < workers; i++ {
+		if !seen[fmt.Sprintf("concurrent-%d", i)] {
+			t.Errorf("missing concurrently created job concurrent-%d", i)
+		}
+	}
+}
+
+func TestCreateExecutionAtomic_ConcurrentSameIdempotencyKeyConverges(t *testing.T) {
+	store := newTestStore(t)
+
+	const workers = 12
+	type result struct {
+		created  bool
+		existing *WorkflowExecution
+		err      error
+	}
+	start := make(chan struct{})
+	results := make(chan result, workers)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		worker := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			created, existing, err := store.CreateExecutionAtomic(&WorkflowExecution{
+				ID:             fmt.Sprintf("atomic-concurrent-%d", worker),
+				Description:    "concurrent idempotency test",
+				Model:          "workflow",
+				Status:         "pending",
+				IdempotencyKey: "atomic-concurrent-key",
+			})
+			results <- result{created: created, existing: existing, err: err}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+
+	createdCount := 0
+	for outcome := range results {
+		if outcome.err != nil {
+			t.Fatalf("concurrent CreateExecutionAtomic failed: %v", outcome.err)
+		}
+		if outcome.created {
+			createdCount++
+			continue
+		}
+		if outcome.existing == nil {
+			t.Fatal("idempotency collision returned neither a created nor existing execution")
+		}
+	}
+	if createdCount != 1 {
+		t.Fatalf("concurrent submissions created %d executions, want exactly 1", createdCount)
+	}
+
+	var persisted int
+	if err := store.DB().QueryRow(`
+		SELECT COUNT(*) FROM jobs WHERE idempotency_key = ?
+	`, "atomic-concurrent-key").Scan(&persisted); err != nil {
+		t.Fatalf("count persisted idempotency rows: %v", err)
+	}
+	if persisted != 1 {
+		t.Fatalf("persisted %d rows for one idempotency key, want 1", persisted)
 	}
 }
 
@@ -1085,7 +1237,8 @@ func TestListExecutionsPaginated_FieldFidelity(t *testing.T) {
 func TestListExecutionsPaginated_Filters(t *testing.T) {
 	s := newTestStore(t)
 	createTestExecution(t, s, "page-a", "completed", withAllFields())
-	time.Sleep(time.Millisecond) // distinct timestamps
+	base := time.Date(2026, time.February, 1, 0, 0, 0, 0, time.Local)
+	setExecutionTimestamps(t, s, "page-a", base)
 	createTestExecution(t, s, "page-b", "running", func(j *Job) {
 		withAllFields()(j)
 		j.IdempotencyKey = "idem-page-b"
@@ -1096,6 +1249,7 @@ func TestListExecutionsPaginated_Filters(t *testing.T) {
 		j.PreviousRunID = "prev-page-b"
 		j.DAGHash = "daghash-page-b"
 	})
+	setExecutionTimestamps(t, s, "page-b", base.Add(time.Second))
 
 	t.Run("FilterByStatus", func(t *testing.T) {
 		result, err := s.ListExecutionsPaginated("", 10, &ExecutionFilters{Status: "running"})
@@ -1174,6 +1328,7 @@ func TestGetChildExecutions_FieldFidelity(t *testing.T) {
 	createTestExecution(t, s, "parent-fid", "completed", withAllFields())
 
 	// Create two children with parent_execution_id set
+	base := time.Date(2026, time.March, 1, 0, 0, 0, 0, time.UTC)
 	for i, childID := range []string{"child-fid-1", "child-fid-2"} {
 		createTestExecution(t, s, childID, "completed", func(j *Job) {
 			withAllFields()(j)
@@ -1186,8 +1341,7 @@ func TestGetChildExecutions_FieldFidelity(t *testing.T) {
 			j.PreviousRunID = fmt.Sprintf("prev-%s", childID)
 			j.DAGHash = fmt.Sprintf("daghash-%s", childID)
 		})
-		_ = i
-		time.Sleep(time.Millisecond) // ensure distinct created_at for ASC ordering
+		setExecutionTimestamps(t, s, childID, base.Add(time.Duration(i)*time.Minute))
 	}
 
 	children, err := s.GetChildExecutions("parent-fid")
@@ -1328,7 +1482,8 @@ func TestGetExecutionChain_FieldFidelity(t *testing.T) {
 
 	// Create root → child1 → grandchild
 	createTestExecution(t, s, "root-chain", "completed", withAllFields())
-	time.Sleep(time.Millisecond)
+	base := time.Date(2026, time.April, 1, 0, 0, 0, 0, time.UTC)
+	setExecutionTimestamps(t, s, "root-chain", base)
 
 	createTestExecution(t, s, "child-chain", "completed", func(j *Job) {
 		withAllFields()(j)
@@ -1341,7 +1496,7 @@ func TestGetExecutionChain_FieldFidelity(t *testing.T) {
 		j.PreviousRunID = "prev-child-chain"
 		j.DAGHash = "daghash-child-chain"
 	})
-	time.Sleep(time.Millisecond)
+	setExecutionTimestamps(t, s, "child-chain", base.Add(time.Minute))
 
 	createTestExecution(t, s, "grandchild-chain", "completed", func(j *Job) {
 		withAllFields()(j)
@@ -1354,6 +1509,7 @@ func TestGetExecutionChain_FieldFidelity(t *testing.T) {
 		j.PreviousRunID = "prev-grandchild-chain"
 		j.DAGHash = "daghash-grandchild-chain"
 	})
+	setExecutionTimestamps(t, s, "grandchild-chain", base.Add(2*time.Minute))
 
 	chain, err := s.GetExecutionChain("root-chain")
 	if err != nil {

@@ -65,17 +65,14 @@ func TestIntegration_JobStreamTerminalSnapshot(t *testing.T) {
 		t.Fatal("expected job_id")
 	}
 
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		jw := httptest.NewRecorder()
-		router.ServeHTTP(jw, httptest.NewRequest("GET", "/api/jobs/"+jobID, nil))
-		var jr map[string]interface{}
-		_ = json.NewDecoder(jw.Body).Decode(&jr)
-		status, _ := jr["status"].(string)
-		if status == events.JobStatusCompleted {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
+	job, err := db.GetExecution(jobID)
+	if err != nil {
+		t.Fatalf("get submitted job: %v", err)
+	}
+	waitCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := manager.WaitForCompletion(waitCtx, jobID, job.WorkflowID); err != nil {
+		t.Fatalf("WaitForCompletion: %v", err)
 	}
 
 	streamReq := httptest.NewRequest("GET", "/api/jobs/"+jobID+"/stream", nil)
@@ -156,14 +153,6 @@ func TestIntegration_JobStreamResumeFromReplaysOnlyNewerEvents(t *testing.T) {
 		t.Fatalf("append seq3 failed: %v", err)
 	}
 
-	go func() {
-		time.Sleep(200 * time.Millisecond)
-		_, _ = db.AppendEventWithDetails(context.Background(), jobID, events.EventComplete, "", "done", "", "", map[string]interface{}{
-			"message": "done",
-		})
-		_ = db.UpdateExecutionStatus(jobID, events.JobStatusCompleted)
-	}()
-
 	server := httptest.NewServer(router)
 	defer server.Close()
 
@@ -204,6 +193,14 @@ func TestIntegration_JobStreamResumeFromReplaysOnlyNewerEvents(t *testing.T) {
 	seqB := readReplaySeq()
 	if seqA != 2 || seqB != 3 {
 		t.Fatalf("expected replay sequences [2,3], got [%d,%d]", seqA, seqB)
+	}
+	if _, err := db.AppendEventWithDetails(context.Background(), jobID, events.EventComplete, "", "done", "", "", map[string]interface{}{
+		"message": "done",
+	}); err != nil {
+		t.Fatalf("append terminal event failed: %v", err)
+	}
+	if err := db.UpdateExecutionStatus(jobID, events.JobStatusCompleted); err != nil {
+		t.Fatalf("update terminal status: %v", err)
 	}
 
 	sawSequenceOne := false
@@ -295,10 +292,9 @@ func TestIntegration_JobStreamCloseCodeMatchesTerminalStatus(t *testing.T) {
 				t.Fatalf("expected snapshot message first, got %v", snapshot["type"])
 			}
 
-			go func() {
-				time.Sleep(200 * time.Millisecond)
-				_ = db.UpdateExecutionStatus(jobID, tt.status)
-			}()
+			if err := db.UpdateExecutionStatus(jobID, tt.status); err != nil {
+				t.Fatalf("update terminal status: %v", err)
+			}
 
 			closeCode := 0
 			deadline := time.Now().Add(6 * time.Second)

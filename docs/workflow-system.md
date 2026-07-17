@@ -707,11 +707,11 @@ Indexed by `(job_id, sequence)` for efficient replay on reconnection.
 tool_call_id, job_id, node_id, payload, status, attempts, max_attempts,
 next_attempt_at, last_error, created_at, updated_at
 ```
-Outbox pattern for durable side effects (tool calls, webhooks).
+Reserved outbox storage shape for future durable side effects. v0.1 has no dispatcher and does not claim at-least-once delivery through this table.
 
 **Indexes:**
 - `idx_jobs_status`, `idx_jobs_created_at`
-- `idx_jobs_idempotency_key` (unique partial)
+- `idx_jobs_idempotency_key` (unique partial on normalized `user_id` + key)
 - `idx_workflow_node_executions_order`
 - `idx_workflow_node_executions_job_node`
 - `idx_workflow_node_execution_attempts_job_node_attempt`

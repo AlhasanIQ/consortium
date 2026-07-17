@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'bun:test';
-import { useEnsembleStore } from './ensembleStore';
+import { type EnsembleJobSnapshot, useEnsembleStore } from './ensembleStore';
 
 describe('EnsembleStore State Machine', () => {
   beforeEach(() => {
@@ -138,6 +138,36 @@ describe('EnsembleStore State Machine', () => {
         jobId: 'job-123',
       });
     });
+
+    it('patches the latest history entry with authoritative completion data', () => {
+      useEnsembleStore.setState({
+        history: [
+          {
+            id: 'history-1',
+            jobId: 'job-123',
+            prompt: 'question',
+            synthesizedResponse: '',
+            timestamp: new Date('2026-01-01T00:00:00Z'),
+            totalCost: 0,
+            totalTokens: 0,
+            totalLatency: 100,
+          },
+        ],
+      });
+
+      useEnsembleStore.getState().setExecutionComplete('job-123', {
+        finalOutput: 'authoritative answer',
+        totalCost: 0.42,
+        totalTokens: 17,
+      });
+
+      const state = useEnsembleStore.getState();
+      expect(state.history[0]).toMatchObject({
+        synthesizedResponse: 'authoritative answer',
+        totalCost: 0.42,
+        totalTokens: 17,
+      });
+    });
   });
 
   describe('setExecutionCancelled()', () => {
@@ -184,6 +214,124 @@ describe('EnsembleStore State Machine', () => {
     it('allows re-execution after error', () => {
       useEnsembleStore.setState({ executionState: { status: 'error', message: 'Previous error' } });
       expect(useEnsembleStore.getState().canExecute()).toBe(true);
+    });
+  });
+
+  describe('applyJobSnapshot()', () => {
+    it('authoritatively projects reconnect node state and is idempotent at terminal completion', () => {
+      useEnsembleStore.setState({
+        prompt: 'question',
+        executionState: { status: 'streaming', jobId: 'job-reconnect', idempotencyKey: 'key-reconnect' },
+        isExecuting: true,
+        phase: 'thinking',
+        history: [],
+        particles: [],
+        agents: [
+          {
+            id: 'agent-a',
+            model: 'provider/model-a',
+            provider: 'provider',
+            displayName: 'Agent A',
+            color: '#111111',
+            status: 'streaming',
+            output: '',
+            streamingText: 'stale partial',
+            tokens: 1,
+            cost: 0.01,
+            latencyMs: 0,
+          },
+          {
+            id: 'agent-b',
+            model: 'provider/model-b',
+            provider: 'provider',
+            displayName: 'Agent B',
+            color: '#222222',
+            status: 'thinking',
+            output: '',
+            streamingText: '',
+            tokens: 0,
+            cost: 0,
+            latencyMs: 0,
+          },
+        ],
+      });
+
+      const runningSnapshot: EnsembleJobSnapshot = {
+        id: 'job-reconnect',
+        status: 'running',
+        cost: 0.3,
+        tokens_total: 9,
+        nodes: [
+          {
+            node_id: 'agent-a',
+            node_type: 'prompt',
+            status: 'completed',
+            output: 'authoritative A',
+            cost: 0.2,
+            tokens_input: 2,
+            tokens_output: 3,
+            latency_ms: 40,
+          },
+          {
+            node_id: 'agent-b',
+            node_type: 'prompt',
+            status: 'failed',
+            error_message: 'provider failed',
+            cost: 0.1,
+            tokens_input: 4,
+          },
+          { node_id: 'result-final', node_type: 'result', status: 'running' },
+        ],
+      };
+
+      useEnsembleStore.getState().applyJobSnapshot(runningSnapshot, 'job-reconnect', 'synthesis');
+
+      let state = useEnsembleStore.getState();
+      expect(state.executionState.status).toBe('streaming');
+      expect(state.isExecuting).toBe(true);
+      expect(state.phase).toBe('aggregating');
+      expect(state.totalCost).toBe(0.3);
+      expect(state.totalTokens).toBe(9);
+      expect(state.agents[0]).toMatchObject({
+        status: 'done',
+        output: 'authoritative A',
+        streamingText: 'authoritative A',
+        tokens: 5,
+        cost: 0.2,
+      });
+      expect(state.agents[1]).toMatchObject({ status: 'error', error: 'provider failed', tokens: 4, cost: 0.1 });
+      expect(state.history).toHaveLength(0);
+
+      const completedSnapshot: EnsembleJobSnapshot = {
+        ...runningSnapshot,
+        status: 'completed',
+        result_text: 'authoritative final',
+        cost: 0.35,
+        tokens_total: 12,
+        nodes: [
+          ...(runningSnapshot.nodes ?? []).slice(0, 2),
+          {
+            node_id: 'result-final',
+            node_type: 'result',
+            status: 'completed',
+            output: 'authoritative final',
+          },
+        ],
+      };
+
+      useEnsembleStore.getState().applyJobSnapshot(completedSnapshot, 'job-reconnect', 'synthesis');
+      useEnsembleStore.getState().applyJobSnapshot(completedSnapshot, 'job-reconnect', 'synthesis');
+
+      state = useEnsembleStore.getState();
+      expect(state.executionState).toEqual({ status: 'complete', jobId: 'job-reconnect' });
+      expect(state.history).toHaveLength(1);
+      expect(state.history[0]).toMatchObject({
+        jobId: 'job-reconnect',
+        synthesizedResponse: 'authoritative final',
+        totalCost: 0.35,
+        totalTokens: 12,
+        aggregationMethod: 'synthesis',
+      });
     });
   });
 

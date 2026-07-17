@@ -151,7 +151,6 @@ func TestIntegration_SubmitCancel(t *testing.T) {
 		models: []providers.Model{
 			{ID: "slow-model", Provider: "slow", InputCost: 0.001, OutputCost: 0.002},
 		},
-		delay: 2 * time.Second,
 	}
 	registry.Register(slowProvider)
 
@@ -380,8 +379,8 @@ func TestIntegration_EventOrdering(t *testing.T) {
 			}
 		}
 
-		if nodeCompleteCount > 1 {
-			t.Errorf("Expected at most 1 node_complete for node1, got %d", nodeCompleteCount)
+		if nodeCompleteCount != 1 {
+			t.Errorf("Expected exactly 1 node_complete for node1, got %d", nodeCompleteCount)
 		}
 	})
 }
@@ -623,9 +622,9 @@ func TestIntegration_JobListEndpoint(t *testing.T) {
 		if i == 4 {
 			job.WorkflowID = "test-workflow-2"
 		}
-		db.CreateExecution(job)
-		// Small delay to ensure different timestamps for ordering
-		time.Sleep(10 * time.Millisecond)
+		if err := db.CreateExecution(job); err != nil {
+			t.Fatalf("failed to create job %q: %v", job.ID, err)
+		}
 	}
 
 	t.Run("list jobs returns paginated results", func(t *testing.T) {
@@ -969,24 +968,22 @@ func Test_SubmitExecutesWithoutStream(t *testing.T) {
 	json.NewDecoder(w.Body).Decode(&submitResp)
 	jobID := submitResp["job_id"].(string)
 
-	// Do NOT open WebSocket. Poll GET /api/jobs/{id} until terminal.
-	var finalStatus string
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		gw := httptest.NewRecorder()
-		router.ServeHTTP(gw, httptest.NewRequest("GET", "/api/jobs/"+jobID, nil))
-		var jr map[string]interface{}
-		json.NewDecoder(gw.Body).Decode(&jr)
-		finalStatus, _ = jr["status"].(string)
-		if finalStatus == "completed" || finalStatus == "failed" || finalStatus == "cancelled" {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
+	// Do NOT open WebSocket. Wait on the manager's completion notification.
+	job, err := db.GetExecution(jobID)
+	if err != nil {
+		t.Fatalf("get submitted job: %v", err)
 	}
+	waitCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := manager.WaitForCompletion(waitCtx, jobID, job.WorkflowID); err != nil {
+		t.Fatalf("WaitForCompletion: %v", err)
+	}
+	completedJob, err := db.GetExecution(jobID)
+	if err != nil {
+		t.Fatalf("get completed job: %v", err)
+	}
+	finalStatus := completedJob.Status
 
-	if finalStatus == "pending" || finalStatus == "running" {
-		t.Fatalf("submitted job did not reach terminal state — got '%s'", finalStatus)
-	}
 	if finalStatus != "completed" {
 		t.Fatalf("expected 'completed', got '%s'", finalStatus)
 	}

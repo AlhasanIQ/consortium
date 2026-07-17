@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"errors"
 	"math"
 	"testing"
 
@@ -173,6 +174,58 @@ func TestClient(t *testing.T) {
 		// cost = 10*0.001 + 20*0.002
 		if math.Abs(tracker.cost-0.05) > 1e-12 {
 			t.Fatalf("unexpected tracked cost: %f", tracker.cost)
+		}
+	})
+
+	t.Run("complete uses provider-reported cost", func(t *testing.T) {
+		providerCost := 0.1234
+		registry := NewRegistry()
+		registry.Register(&mockProvider{
+			name:   "reported-cost-provider",
+			models: []Model{{ID: "reported-cost-model", Provider: "reported-cost-provider", InputCost: 0.001, OutputCost: 0.002}},
+			response: &CompletionResponse{
+				Content: "priced response",
+				Usage: Usage{
+					PromptTokens:     10,
+					CompletionTokens: 20,
+					TotalTokens:      30,
+					Cost:             &providerCost,
+				},
+			},
+		})
+		tracker := &mockCostTracker{}
+		client := NewClient(registry, nil)
+
+		_, err := client.Complete(context.Background(), &ClientRequest{Model: "reported-cost-model"}, &CompletionContext{CostTracker: tracker})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if tracker.input != 10 || tracker.output != 20 || tracker.cost != providerCost {
+			t.Fatalf("tracker = in:%d out:%d cost:%v, want provider-reported usage", tracker.input, tracker.output, tracker.cost)
+		}
+	})
+
+	t.Run("complete does not account failed provider calls", func(t *testing.T) {
+		registry := NewRegistry()
+		registry.Register(&mockProvider{
+			name:   "failed-provider",
+			models: []Model{{ID: "failed-model", Provider: "failed-provider", InputCost: 0.001, OutputCost: 0.002}},
+			err:    errors.New("provider unavailable"),
+			response: &CompletionResponse{Usage: Usage{
+				PromptTokens:     10,
+				CompletionTokens: 20,
+				TotalTokens:      30,
+			}},
+		})
+		tracker := &mockCostTracker{}
+		client := NewClient(registry, nil)
+
+		_, err := client.Complete(context.Background(), &ClientRequest{Model: "failed-model"}, &CompletionContext{CostTracker: tracker})
+		if err == nil {
+			t.Fatal("expected provider error")
+		}
+		if tracker.input != 0 || tracker.output != 0 || tracker.cost != 0 {
+			t.Fatalf("failed call changed tracker = in:%d out:%d cost:%v", tracker.input, tracker.output, tracker.cost)
 		}
 	})
 

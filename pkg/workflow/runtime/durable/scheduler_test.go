@@ -2,6 +2,7 @@ package durable
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -362,6 +363,35 @@ func TestBuildDeps_NoEdges_LinearDepsInjected(t *testing.T) {
 	ready = state.ReadySet(deps)
 	if len(ready) != 1 || ready[0] != "s2" {
 		t.Errorf("Expected [s2], got %v", ready)
+	}
+}
+
+func TestBuildDeps_RejectsCyclesBeforeScheduling(t *testing.T) {
+	snapshot, err := runtime.FreezeWorkflow(
+		"wf-cycle",
+		"Cycle",
+		"",
+		[]runtime.NodeForFreeze{
+			{ID: "a", Type: "prompt"},
+			{ID: "b", Type: "prompt"},
+		},
+		[]runtime.EdgeForFreeze{
+			{Source: "a", Target: "b"},
+			{Source: "b", Target: "a"},
+		},
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("FreezeWorkflow failed: %v", err)
+	}
+
+	_, _, err = BuildDeps(snapshot)
+	if err == nil {
+		t.Fatal("expected cyclic snapshot to be rejected")
+	}
+	if !strings.Contains(err.Error(), "cycle detected") {
+		t.Fatalf("expected cycle error, got %v", err)
 	}
 }
 

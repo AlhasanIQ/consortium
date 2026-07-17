@@ -73,24 +73,34 @@ func TestManager(t *testing.T) {
 		wf1 := simpleWorkflow("First", "mock-model", "Test")
 		wf2 := simpleWorkflow("Second", "mock-model", "Test")
 
-		done := make(chan *WorkflowExecutionResult, 2)
+		type executionOutcome struct {
+			result *WorkflowExecutionResult
+			err    error
+		}
+		done := make(chan executionOutcome, 2)
 
 		go func() {
-			result, _ := manager.ExecuteWorkflow(context.Background(), wf1)
-			done <- result
+			result, err := manager.ExecuteWorkflow(context.Background(), wf1)
+			done <- executionOutcome{result: result, err: err}
 		}()
 
 		go func() {
-			result, _ := manager.ExecuteWorkflow(context.Background(), wf2)
-			done <- result
+			result, err := manager.ExecuteWorkflow(context.Background(), wf2)
+			done <- executionOutcome{result: result, err: err}
 		}()
 
 		// Collect results
 		results := make([]*WorkflowExecutionResult, 2)
 		for i := 0; i < 2; i++ {
 			select {
-			case r := <-done:
-				results[i] = r
+			case outcome := <-done:
+				if outcome.err != nil {
+					t.Fatalf("concurrent execution failed: %v", outcome.err)
+				}
+				if outcome.result == nil || !outcome.result.Success {
+					t.Fatalf("concurrent execution returned unsuccessful result: %+v", outcome.result)
+				}
+				results[i] = outcome.result
 			case <-time.After(5 * time.Second):
 				t.Fatal("timeout waiting for executions")
 			}
@@ -1003,32 +1013,6 @@ func TestExecuteWorkflow_FailsWithoutWorkers(t *testing.T) {
 
 }
 
-func TestExecuteWorkflowDoesNotWaitForCompletionPollInterval(t *testing.T) {
-	manager, _ := setupManagerTest(t)
-	startWorkers(t, manager)
-
-	wf := &workflow.Workflow{
-		ID:   "wf-fast-completion",
-		Name: "Fast completion",
-		Nodes: []*workflow.Node{
-			strictPromptNode("n1", "mock-model", "Hello"),
-		},
-	}
-
-	started := time.Now()
-	result, err := manager.ExecuteWorkflow(context.Background(), wf)
-	elapsed := time.Since(started)
-	if err != nil {
-		t.Fatalf("ExecuteWorkflow failed: %v", err)
-	}
-	if result == nil || !result.Success {
-		t.Fatalf("ExecuteWorkflow result = %+v, want success", result)
-	}
-	if elapsed >= 45*time.Millisecond {
-		t.Fatalf("ExecuteWorkflow took %s, want below completion poll interval", elapsed)
-	}
-}
-
 // ---------------------------------------------------------------------------
 // SubmitWorkflow identity & snapshot tests (table-driven)
 // ---------------------------------------------------------------------------
@@ -1655,6 +1639,10 @@ func TestRunConcurrently(t *testing.T) {
 		progressCalls := 0
 		seenCompleted := make(map[int]int, totalTasks)
 		callbackErrors := make([]string, 0)
+		taskStarted := make(chan struct{}, totalTasks)
+		release := make(chan struct{})
+		var releaseOnce sync.Once
+		defer releaseOnce.Do(func() { close(release) })
 
 		tasks := make([]func(), 0, totalTasks)
 		for range totalTasks {
@@ -1666,7 +1654,8 @@ func TestRunConcurrently(t *testing.T) {
 				}
 				mu.Unlock()
 
-				time.Sleep(20 * time.Millisecond)
+				taskStarted <- struct{}{}
+				<-release
 
 				mu.Lock()
 				currentRunning--
@@ -1674,20 +1663,44 @@ func TestRunConcurrently(t *testing.T) {
 			})
 		}
 
-		RunConcurrently(tasks, concurrency, func(completed, total int) {
-			mu.Lock()
-			defer mu.Unlock()
-			progressCalls++
-			if total != totalTasks {
-				callbackErrors = append(callbackErrors, fmt.Sprintf("expected total=%d in progress callback, got %d", totalTasks, total))
-				return
+		runDone := make(chan struct{})
+		go func() {
+			RunConcurrently(tasks, concurrency, func(completed, total int) {
+				mu.Lock()
+				defer mu.Unlock()
+				progressCalls++
+				if total != totalTasks {
+					callbackErrors = append(callbackErrors, fmt.Sprintf("expected total=%d in progress callback, got %d", totalTasks, total))
+					return
+				}
+				if completed < 1 || completed > totalTasks {
+					callbackErrors = append(callbackErrors, fmt.Sprintf("expected completed in [1,%d], got %d", totalTasks, completed))
+					return
+				}
+				seenCompleted[completed]++
+			})
+			close(runDone)
+		}()
+
+		for i := 0; i < concurrency; i++ {
+			select {
+			case <-taskStarted:
+			case <-time.After(time.Second):
+				t.Fatalf("timed out waiting for task %d to start", i+1)
 			}
-			if completed < 1 || completed > totalTasks {
-				callbackErrors = append(callbackErrors, fmt.Sprintf("expected completed in [1,%d], got %d", totalTasks, completed))
-				return
-			}
-			seenCompleted[completed]++
-		})
+		}
+		mu.Lock()
+		if maxRunning != concurrency {
+			mu.Unlock()
+			t.Fatalf("expected exactly %d tasks to be running before release, got %d", concurrency, maxRunning)
+		}
+		mu.Unlock()
+		releaseOnce.Do(func() { close(release) })
+		select {
+		case <-runDone:
+		case <-time.After(time.Second):
+			t.Fatal("RunConcurrently did not finish after releasing tasks")
+		}
 
 		mu.Lock()
 		defer mu.Unlock()

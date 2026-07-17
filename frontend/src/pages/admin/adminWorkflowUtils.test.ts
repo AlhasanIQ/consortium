@@ -29,9 +29,9 @@ describe('workflowReferenceGroups', () => {
     expect(
       workflowReferenceGroups(
         workflow({
-          AggregationSourceIDs: ['aggregation-judge'],
-          WorkflowRefIDs: ['reasoning-b', 'reasoning-a', 'reasoning-a'],
-          ChildWorkflowIDs: ['reasoning-child'],
+          AggregationSourceIDs: [' aggregation-judge ', ''],
+          WorkflowRefIDs: ['reasoning-b', ' reasoning-a ', 'reasoning-a', '  '],
+          ChildWorkflowIDs: ['reasoning-child', 'reasoning-child'],
         }),
       ),
     ).toEqual([

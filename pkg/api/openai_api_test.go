@@ -18,11 +18,80 @@ import (
 	"time"
 
 	"github.com/alhasaniq/consortium/pkg/events"
+	"github.com/alhasaniq/consortium/pkg/jobs"
 	"github.com/alhasaniq/consortium/pkg/providers"
 	"github.com/alhasaniq/consortium/pkg/storage"
 	"github.com/alhasaniq/consortium/pkg/workflow"
 	"github.com/gorilla/mux"
 )
+
+func TestOpenAISubmitErrorMappingPreservesPublicContract(t *testing.T) {
+	tests := []struct {
+		name        string
+		err         error
+		wantStatus  int
+		wantCode    string
+		wantMessage string
+	}{
+		{
+			name:        "admission paused",
+			err:         &jobs.AdmissionPausedError{Reason: jobs.AdmissionPauseReason{Code: "AUTH_ERROR"}},
+			wantStatus:  http.StatusServiceUnavailable,
+			wantCode:    "server_overloaded",
+			wantMessage: "server overloaded",
+		},
+		{
+			name:        "admission capacity",
+			err:         jobs.ErrPoolExhausted,
+			wantStatus:  http.StatusServiceUnavailable,
+			wantCode:    "server_overloaded",
+			wantMessage: "server overloaded",
+		},
+		{
+			name:        "workflow validation",
+			err:         jobs.NewWorkflowSubmitValidationError("invalid workflow", nil),
+			wantStatus:  http.StatusBadRequest,
+			wantCode:    "invalid_request",
+			wantMessage: "invalid workflow request",
+		},
+		{
+			name:        "caller cancellation",
+			err:         context.Canceled,
+			wantStatus:  499,
+			wantCode:    "request_cancelled",
+			wantMessage: "request cancelled",
+		},
+		{
+			name:        "deadline",
+			err:         context.DeadlineExceeded,
+			wantStatus:  http.StatusGatewayTimeout,
+			wantCode:    "timeout",
+			wantMessage: "request timed out",
+		},
+		{
+			name:        "unknown failure",
+			err:         errors.New("database unavailable"),
+			wantStatus:  http.StatusInternalServerError,
+			wantCode:    "internal_error",
+			wantMessage: "workflow submission failed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			status, code := openAIStatusFromSubmitError(tt.err)
+			if status != tt.wantStatus || code != tt.wantCode {
+				t.Fatalf("status/code = %d/%q, want %d/%q", status, code, tt.wantStatus, tt.wantCode)
+			}
+			if got := openAIPublicSubmitErrorMessage(tt.err, status); got != tt.wantMessage {
+				t.Fatalf("message = %q, want %q", got, tt.wantMessage)
+			}
+			if tt.wantStatus == 499 && openAIHTTPStatus(status) != http.StatusRequestTimeout {
+				t.Fatalf("cancelled request status = %d, want public HTTP 408", openAIHTTPStatus(status))
+			}
+		})
+	}
+}
 
 func TestOpenAIModelsRequiresBearerAuth(t *testing.T) {
 	api, _ := setupWorkflowAPI(t)
@@ -41,6 +110,49 @@ func TestOpenAIModelsRequiresBearerAuth(t *testing.T) {
 	}
 	if _, ok := payload["error"].(map[string]any); !ok {
 		t.Fatalf("response = %#v, want OpenAI-style error object", payload)
+	}
+	if got := w.Header().Get("WWW-Authenticate"); got != `Bearer realm="consortium"` {
+		t.Fatalf("WWW-Authenticate = %q, want Bearer challenge", got)
+	}
+}
+
+func TestOpenAIEndpointsRejectMalformedJSONBeforeWorkflowSubmission(t *testing.T) {
+	for _, endpoint := range []string{openAIUsageEndpointChat, openAIUsageEndpointResponses} {
+		t.Run(endpoint, func(t *testing.T) {
+			api, store := setupWorkflowAPI(t)
+			provider := registerMockProvider(t, api, "must not run")
+			key := createOpenAITestKey(t, store, "sk-consortium-test_123")
+			upsertOpenAIDirectModelRoute(t, store)
+
+			router := mux.NewRouter()
+			api.RegisterRoutes(router)
+			req := httptest.NewRequest(http.MethodPost, endpoint, strings.NewReader(`{"model":"gpt-test",`))
+			req.Header.Set("Authorization", "Bearer "+key)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400 body=%s", w.Code, w.Body.String())
+			}
+			assertOpenAIErrorEnvelope(t, w, "invalid_json")
+			if provider.CallCount() != 0 {
+				t.Fatalf("provider calls = %d, want 0 for malformed request", provider.CallCount())
+			}
+			rows, err := store.ListAPIUsage(storage.APIUsageFilters{KeyID: "key-test", Endpoint: endpoint, Limit: 10})
+			if err != nil {
+				t.Fatalf("ListAPIUsage: %v", err)
+			}
+			if len(rows) != 1 || rows[0].Status != storage.APIUsageStatusFailed || rows[0].ErrorCode != "invalid_json" || rows[0].HTTPStatus != http.StatusBadRequest {
+				t.Fatalf("usage rows = %+v, want one invalid_json failure", rows)
+			}
+			jobs, err := store.ListExecutions(10)
+			if err != nil {
+				t.Fatalf("ListExecutions: %v", err)
+			}
+			if len(jobs) != 0 {
+				t.Fatalf("jobs = %+v, want no workflow submission", jobs)
+			}
+		})
 	}
 }
 
@@ -66,6 +178,9 @@ func TestOpenAIInvalidBearerRequestsArePreAuthRateLimited(t *testing.T) {
 	second := call()
 	if second.Code != http.StatusTooManyRequests {
 		t.Fatalf("second status = %d, want 429 body=%s", second.Code, second.Body.String())
+	}
+	if second.Header().Get("Retry-After") == "" {
+		t.Fatal("missing Retry-After header on pre-auth rate limit")
 	}
 	assertOpenAIErrorEnvelope(t, second, "rate_limit_exceeded")
 }
@@ -1816,12 +1931,13 @@ func TestOpenAIResponsesBackgroundReturnsInProgressAndLaterRetrievesCompleted(t 
 	}
 	defer db.Close()
 	registry := providers.NewRegistry()
+	release := make(chan struct{})
 	registry.Register(&SlowMockProvider{
 		name: "mock",
 		models: []providers.Model{
 			{ID: "mock-model", Provider: "mock", InputCost: 0.000001, OutputCost: 0.000002},
 		},
-		delay: 80 * time.Millisecond,
+		release: release,
 	})
 	manager := newTestJobManager(db, registry)
 	manager.StartWorkers()
@@ -1870,63 +1986,64 @@ func TestOpenAIResponsesBackgroundReturnsInProgressAndLaterRetrievesCompleted(t 
 	}
 	initialPublicItemID, _ := initialData[0].(map[string]any)["id"].(string)
 	initialStorageItemID, _ := initialItems["first_id"].(string)
+	close(release)
 
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		req := httptest.NewRequest(http.MethodGet, "/v1/responses/"+responseID, nil)
-		req.Header.Set("Authorization", "Bearer "+key)
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-		if w.Code != http.StatusOK {
-			t.Fatalf("retrieve status = %d, want 200 body=%s", w.Code, w.Body.String())
-		}
-		var got map[string]any
-		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
-			t.Fatalf("decode retrieve: %v", err)
-		}
-		if got["status"] == "completed" {
-			if got["output_text"] != "Slow response" {
-				t.Fatalf("completed response = %#v", got)
-			}
-			req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
-			req.Header.Set("Authorization", "Bearer "+key)
-			req.Header.Set("Idempotency-Key", "background-test")
-			w := httptest.NewRecorder()
-			router.ServeHTTP(w, req)
-			if w.Code != http.StatusOK {
-				t.Fatalf("idempotent replay status = %d, want 200 body=%s", w.Code, w.Body.String())
-			}
-			var replayed map[string]any
-			if err := json.Unmarshal(w.Body.Bytes(), &replayed); err != nil {
-				t.Fatalf("decode idempotent replay: %v", err)
-			}
-			if replayed["id"] != responseID || replayed["status"] != "completed" {
-				t.Fatalf("idempotent replay = %#v, want completed original response", replayed)
-			}
-			req = httptest.NewRequest(http.MethodGet, "/v1/responses/"+responseID+"/input_items", nil)
-			req.Header.Set("Authorization", "Bearer "+key)
-			w = httptest.NewRecorder()
-			router.ServeHTTP(w, req)
-			if w.Code != http.StatusOK {
-				t.Fatalf("completed input_items status = %d, want 200 body=%s", w.Code, w.Body.String())
-			}
-			var completedItems map[string]any
-			if err := json.Unmarshal(w.Body.Bytes(), &completedItems); err != nil {
-				t.Fatalf("decode completed input_items: %v", err)
-			}
-			completedData := completedItems["data"].([]any)
-			completedPublicItemID, _ := completedData[0].(map[string]any)["id"].(string)
-			completedStorageItemID, _ := completedItems["first_id"].(string)
-			if completedPublicItemID != initialPublicItemID || completedStorageItemID != initialStorageItemID {
-				t.Fatalf("background input item IDs changed: initial public=%q storage=%q completed public=%q storage=%q",
-					initialPublicItemID, initialStorageItemID, completedPublicItemID, completedStorageItemID)
-			}
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("response did not complete before deadline: %s", w.Body.String())
-		}
-		time.Sleep(20 * time.Millisecond)
+	record, err := db.GetOpenAIObject(responseID, "key-test")
+	if err != nil {
+		t.Fatalf("GetOpenAIObject: %v", err)
+	}
+	waitCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, err := manager.WaitForCompletion(waitCtx, record.JobID, record.WorkflowID); err != nil {
+		t.Fatalf("WaitForCompletion: %v", err)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/v1/responses/"+responseID, nil)
+	req.Header.Set("Authorization", "Bearer "+key)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("retrieve status = %d, want 200 body=%s", w.Code, w.Body.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode retrieve: %v", err)
+	}
+	if got["status"] != "completed" || got["output_text"] != "Slow response" {
+		t.Fatalf("completed response = %#v", got)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+key)
+	req.Header.Set("Idempotency-Key", "background-test")
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("idempotent replay status = %d, want 200 body=%s", w.Code, w.Body.String())
+	}
+	var replayed map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &replayed); err != nil {
+		t.Fatalf("decode idempotent replay: %v", err)
+	}
+	if replayed["id"] != responseID || replayed["status"] != "completed" {
+		t.Fatalf("idempotent replay = %#v, want completed original response", replayed)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/v1/responses/"+responseID+"/input_items", nil)
+	req.Header.Set("Authorization", "Bearer "+key)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("completed input_items status = %d, want 200 body=%s", w.Code, w.Body.String())
+	}
+	var completedItems map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &completedItems); err != nil {
+		t.Fatalf("decode completed input_items: %v", err)
+	}
+	completedData := completedItems["data"].([]any)
+	completedPublicItemID, _ := completedData[0].(map[string]any)["id"].(string)
+	completedStorageItemID, _ := completedItems["first_id"].(string)
+	if completedPublicItemID != initialPublicItemID || completedStorageItemID != initialStorageItemID {
+		t.Fatalf("background input item IDs changed: initial public=%q storage=%q completed public=%q storage=%q",
+			initialPublicItemID, initialStorageItemID, completedPublicItemID, completedStorageItemID)
 	}
 }
 
@@ -2179,6 +2296,420 @@ func TestOpenAIBackgroundReconcilerSweepsTerminalJobs(t *testing.T) {
 	}
 }
 
+type openAIBackgroundReconcileFixture struct {
+	responseID     string
+	jobID          string
+	workflowID     string
+	idempotencyKey string
+	initialJSON    string
+}
+
+func seedCompletedOpenAIBackgroundReconcileFixture(
+	t *testing.T,
+	store *storage.Storage,
+	suffix string,
+	body string,
+	output string,
+	callerIdempotencyKey string,
+	at time.Time,
+	withUsage bool,
+) openAIBackgroundReconcileFixture {
+	t.Helper()
+
+	fixture := openAIBackgroundReconcileFixture{
+		responseID:     "resp-reconcile-" + suffix,
+		jobID:          "job-reconcile-" + suffix,
+		workflowID:     "wf-reconcile-" + suffix,
+		idempotencyKey: openAIAPIIdempotencyStorageKey(openAIUsageEndpointResponses, callerIdempotencyKey),
+	}
+	if err := store.CreateExecution(&storage.WorkflowExecution{
+		ID:         fixture.jobID,
+		Status:     events.JobStatusRunning,
+		Model:      "mock-model",
+		WorkflowID: fixture.workflowID,
+	}); err != nil {
+		t.Fatalf("CreateExecution %s: %v", suffix, err)
+	}
+	if err := store.CompleteExecution(fixture.jobID, events.JobStatusCompleted, output, 0.01, 2, 3, 5, ""); err != nil {
+		t.Fatalf("CompleteExecution %s: %v", suffix, err)
+	}
+
+	initialPayload := openAIResponseObject(fixture.responseID, "gpt-test", at.Unix(), storage.OpenAIObjectStatusInProgress, "", nil, nil)
+	initialPayload["store"] = true
+	initialPayload["background"] = true
+	initialPayload["metadata"] = map[string]any{}
+	initialJSON, err := json.Marshal(initialPayload)
+	if err != nil {
+		t.Fatalf("marshal initial response %s: %v", suffix, err)
+	}
+	fixture.initialJSON = string(initialJSON)
+	if err := store.CreateOpenAIObjectWithItems(&storage.OpenAIObjectRecord{
+		ID:             fixture.responseID,
+		ObjectType:     storage.OpenAIObjectTypeResponse,
+		KeyID:          "key-test",
+		UserID:         "system",
+		Endpoint:       openAIUsageEndpointResponses,
+		JobID:          fixture.jobID,
+		RequestedModel: "gpt-test",
+		ResolvedModel:  "mock-model",
+		WorkflowID:     fixture.workflowID,
+		Status:         storage.OpenAIObjectStatusInProgress,
+		Store:          true,
+		Background:     true,
+		MetadataJSON:   `{}`,
+		RequestJSON:    body,
+		ResponseJSON:   fixture.initialJSON,
+		UsageJSON:      `{}`,
+		CreatedAt:      at,
+		UpdatedAt:      at,
+	}, openAIResponseInputStoredItems(fixture.responseID, json.RawMessage(`"Hello"`), "Hello")); err != nil {
+		t.Fatalf("CreateOpenAIObjectWithItems %s: %v", suffix, err)
+	}
+
+	if withUsage {
+		if err := store.CreateAPIUsage(&storage.APIUsageRecord{
+			ID:         "usage-reconcile-" + suffix,
+			RequestID:  "req-reconcile-" + suffix,
+			KeyID:      "key-test",
+			UserID:     "system",
+			Endpoint:   openAIUsageEndpointResponses,
+			JobID:      fixture.jobID,
+			Status:     storage.APIUsageStatusRunning,
+			HTTPStatus: http.StatusOK,
+			CreatedAt:  at,
+		}); err != nil {
+			t.Fatalf("CreateAPIUsage %s: %v", suffix, err)
+		}
+	}
+
+	fingerprint := sha256.Sum256([]byte(body))
+	if _, _, err := store.ReserveAPIIdempotency(&storage.APIIdempotencyRecord{
+		ID:                 "idem-reconcile-" + suffix,
+		KeyID:              "key-test",
+		IdempotencyKey:     fixture.idempotencyKey,
+		RequestFingerprint: hex.EncodeToString(fingerprint[:]),
+		JobID:              fixture.jobID,
+		ResponseBody:       fixture.initialJSON,
+		HTTPStatus:         http.StatusOK,
+		CreatedAt:          at,
+		ExpiresAt:          time.Now().UTC().Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("ReserveAPIIdempotency %s: %v", suffix, err)
+	}
+	return fixture
+}
+
+func TestOpenAIBackgroundReconcilerContinuesAfterPoisonRecord(t *testing.T) {
+	api, store := setupWorkflowAPI(t)
+	base := time.Now().UTC().Add(-time.Hour)
+	body := `{"model":"gpt-test","input":"Hello","background":true}`
+	poison := seedCompletedOpenAIBackgroundReconcileFixture(t, store, "poison", body, "Poison output", "poison", base, true)
+	healthy := seedCompletedOpenAIBackgroundReconcileFixture(t, store, "healthy", body, "Healthy output", "healthy", base.Add(time.Minute), true)
+
+	if _, err := store.DB().Exec(`
+		CREATE TRIGGER reject_poison_background_completion
+		BEFORE UPDATE ON api_openai_objects
+		WHEN OLD.id = 'resp-reconcile-poison' AND NEW.status = 'completed'
+		BEGIN
+			SELECT RAISE(ABORT, 'poison background completion');
+		END
+	`); err != nil {
+		t.Fatalf("create poison trigger: %v", err)
+	}
+
+	reconciled, err := api.reconcileTerminalOpenAIBackgroundResponses(context.Background(), 10)
+	if reconciled != 1 {
+		t.Fatalf("reconciled = %d, want 1 healthy record", reconciled)
+	}
+	if err == nil || !strings.Contains(err.Error(), poison.responseID) || !strings.Contains(err.Error(), "poison background completion") {
+		t.Fatalf("reconcile error = %v, want contextual poison-record error", err)
+	}
+
+	poisonRecord, err := store.GetOpenAIObject(poison.responseID, "key-test")
+	if err != nil {
+		t.Fatalf("GetOpenAIObject poison: %v", err)
+	}
+	if poisonRecord.Status != storage.OpenAIObjectStatusInProgress || poisonRecord.ResponseJSON != poison.initialJSON {
+		t.Fatalf("poison record changed despite rolled-back transaction: %+v", poisonRecord)
+	}
+	poisonIdem, err := store.GetAPIIdempotency("key-test", poison.idempotencyKey)
+	if err != nil {
+		t.Fatalf("GetAPIIdempotency poison: %v", err)
+	}
+	if poisonIdem.ResponseBody != poison.initialJSON {
+		t.Fatalf("poison idempotency changed despite rolled-back transaction: %+v", poisonIdem)
+	}
+
+	healthyRecord, err := store.GetOpenAIObject(healthy.responseID, "key-test")
+	if err != nil {
+		t.Fatalf("GetOpenAIObject healthy: %v", err)
+	}
+	if healthyRecord.Status != storage.OpenAIObjectStatusCompleted || !strings.Contains(healthyRecord.ResponseJSON, "Healthy output") {
+		t.Fatalf("healthy record = %+v, want completed output", healthyRecord)
+	}
+	healthyIdem, err := store.GetAPIIdempotency("key-test", healthy.idempotencyKey)
+	if err != nil {
+		t.Fatalf("GetAPIIdempotency healthy: %v", err)
+	}
+	if !strings.Contains(healthyIdem.ResponseBody, `"status":"completed"`) || !strings.Contains(healthyIdem.ResponseBody, "Healthy output") {
+		t.Fatalf("healthy idempotency = %+v, want terminal response", healthyIdem)
+	}
+
+	usages, err := store.ListAPIUsage(storage.APIUsageFilters{KeyID: "key-test", Endpoint: openAIUsageEndpointResponses, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListAPIUsage: %v", err)
+	}
+	statuses := make(map[string]string, len(usages))
+	for _, usage := range usages {
+		statuses[usage.JobID] = usage.Status
+	}
+	if statuses[poison.jobID] != storage.APIUsageStatusRunning || statuses[healthy.jobID] != storage.APIUsageStatusSucceeded {
+		t.Fatalf("usage statuses = %#v, want poison running and healthy succeeded", statuses)
+	}
+}
+
+func TestOpenAIBackgroundReconcilerMissingUsageFinalizesTerminalReplayAtomically(t *testing.T) {
+	api, store := setupWorkflowAPI(t)
+	provider := registerMockProvider(t, api, "must not execute during replay")
+	key := createOpenAITestKey(t, store, "sk-consortium-test_123")
+	upsertOpenAIDirectModelRoute(t, store)
+
+	body := `{"model":"gpt-test","input":"Recover","background":true}`
+	callerIdempotencyKey := "missing-usage"
+	fixture := seedCompletedOpenAIBackgroundReconcileFixture(
+		t,
+		store,
+		"missing-usage",
+		body,
+		"Recovered without usage row",
+		callerIdempotencyKey,
+		time.Now().UTC().Add(-time.Hour),
+		false,
+	)
+
+	reconciled, err := api.reconcileTerminalOpenAIBackgroundResponses(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("first reconcile: %v", err)
+	}
+	if reconciled != 1 {
+		t.Fatalf("first reconciled = %d, want 1", reconciled)
+	}
+
+	record, err := store.GetOpenAIObject(fixture.responseID, "key-test")
+	if err != nil {
+		t.Fatalf("GetOpenAIObject: %v", err)
+	}
+	if record.Status != storage.OpenAIObjectStatusCompleted || record.CompletedAt == nil || !strings.Contains(record.ResponseJSON, "Recovered without usage row") {
+		t.Fatalf("record = %+v, want completed fallback response", record)
+	}
+	inputItems, _, err := store.ListOpenAIObjectItems(fixture.responseID, "key-test", storage.OpenAIItemKindInput, storage.OpenAIListPageRequest{Limit: 10})
+	if err != nil {
+		t.Fatalf("ListOpenAIObjectItems input: %v", err)
+	}
+	outputItems, _, err := store.ListOpenAIObjectItems(fixture.responseID, "key-test", storage.OpenAIItemKindOutput, storage.OpenAIListPageRequest{Limit: 10})
+	if err != nil {
+		t.Fatalf("ListOpenAIObjectItems output: %v", err)
+	}
+	if len(inputItems) != 1 || len(outputItems) != 1 || !strings.Contains(outputItems[0].RawJSON, "Recovered without usage row") {
+		t.Fatalf("reconciled items input=%+v output=%+v", inputItems, outputItems)
+	}
+	idem, err := store.GetAPIIdempotency("key-test", fixture.idempotencyKey)
+	if err != nil {
+		t.Fatalf("GetAPIIdempotency: %v", err)
+	}
+	if idem.HTTPStatus != http.StatusOK || idem.ResponseBody != record.ResponseJSON || !strings.Contains(idem.ResponseBody, `"status":"completed"`) {
+		t.Fatalf("idempotency = %+v, want completed object replay", idem)
+	}
+
+	reconciled, err = api.reconcileTerminalOpenAIBackgroundResponses(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+	if reconciled != 0 {
+		t.Fatalf("second reconciled = %d, want 0 for terminal object", reconciled)
+	}
+	recordAfterSecondSweep, err := store.GetOpenAIObject(fixture.responseID, "key-test")
+	if err != nil {
+		t.Fatalf("GetOpenAIObject after second sweep: %v", err)
+	}
+	if recordAfterSecondSweep.ResponseJSON != record.ResponseJSON || recordAfterSecondSweep.CompletedAt == nil || !recordAfterSecondSweep.CompletedAt.Equal(*record.CompletedAt) {
+		t.Fatalf("second sweep mutated terminal record: before=%+v after=%+v", record, recordAfterSecondSweep)
+	}
+
+	router := mux.NewRouter()
+	api.RegisterRoutes(router)
+	req := httptest.NewRequest(http.MethodPost, openAIUsageEndpointResponses, strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+key)
+	req.Header.Set("Idempotency-Key", callerIdempotencyKey)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("terminal replay status = %d, want 200 body=%s", w.Code, w.Body.String())
+	}
+	if w.Body.String() != record.ResponseJSON {
+		t.Fatalf("terminal replay body differs from stored response\nreplay=%s\nstored=%s", w.Body.String(), record.ResponseJSON)
+	}
+	if provider.CallCount() != 0 {
+		t.Fatalf("provider calls = %d, want 0 for terminal idempotent replay", provider.CallCount())
+	}
+	usages, err := store.ListAPIUsage(storage.APIUsageFilters{KeyID: "key-test", Endpoint: openAIUsageEndpointResponses, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListAPIUsage: %v", err)
+	}
+	if len(usages) != 0 {
+		t.Fatalf("usage rows = %+v, want no synthesized or replay usage row", usages)
+	}
+}
+
+func TestOpenAIBackgroundReconcilerPropagatesNonSuccessTerminalStates(t *testing.T) {
+	tests := []struct {
+		name            string
+		jobStatus       string
+		jobError        string
+		wantObject      string
+		wantUsage       string
+		wantErrorCode   string
+		wantErrorSubstr string
+	}{
+		{
+			name:            "failed",
+			jobStatus:       events.JobStatusFailed,
+			jobError:        "provider exploded",
+			wantObject:      storage.OpenAIObjectStatusFailed,
+			wantUsage:       storage.APIUsageStatusFailed,
+			wantErrorCode:   "execution_failed",
+			wantErrorSubstr: "workflow execution failed",
+		},
+		{
+			name:            "cancelled",
+			jobStatus:       events.JobStatusCancelled,
+			wantObject:      storage.OpenAIObjectStatusCancelled,
+			wantUsage:       storage.APIUsageStatusCancelled,
+			wantErrorCode:   "cancelled",
+			wantErrorSubstr: "cancelled",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api, store := setupWorkflowAPI(t)
+			now := time.Now().UTC()
+			jobID := "job-openai-background-" + tt.name
+			responseID := "resp-openai-background-" + tt.name
+			workflowID := "wf-openai-background-" + tt.name
+			idempotencyKey := openAIAPIIdempotencyStorageKey(openAIUsageEndpointResponses, "background-"+tt.name)
+
+			if err := store.CreateExecution(&storage.WorkflowExecution{
+				ID:         jobID,
+				Status:     events.JobStatusRunning,
+				Model:      "mock-model",
+				WorkflowID: workflowID,
+			}); err != nil {
+				t.Fatalf("CreateExecution: %v", err)
+			}
+			if err := store.CompleteExecution(jobID, tt.jobStatus, "", 0, 0, 0, 0, tt.jobError); err != nil {
+				t.Fatalf("CompleteExecution: %v", err)
+			}
+
+			initialPayload := openAIResponseObject(responseID, "gpt-test", now.Unix(), storage.OpenAIObjectStatusInProgress, "", nil, nil)
+			initialPayload["store"] = true
+			initialPayload["background"] = true
+			initialPayload["metadata"] = map[string]any{"case": tt.name}
+			initialJSON, err := json.Marshal(initialPayload)
+			if err != nil {
+				t.Fatalf("marshal initial response: %v", err)
+			}
+			if err := store.CreateOpenAIObjectWithItems(&storage.OpenAIObjectRecord{
+				ID:             responseID,
+				ObjectType:     storage.OpenAIObjectTypeResponse,
+				KeyID:          "key-test",
+				UserID:         "system",
+				Endpoint:       openAIUsageEndpointResponses,
+				JobID:          jobID,
+				RequestedModel: "gpt-test",
+				ResolvedModel:  "mock-model",
+				WorkflowID:     workflowID,
+				Status:         storage.OpenAIObjectStatusInProgress,
+				Store:          true,
+				Background:     true,
+				MetadataJSON:   `{"case":"` + tt.name + `"}`,
+				RequestJSON:    `{"model":"gpt-test","input":"Hello","background":true}`,
+				ResponseJSON:   string(initialJSON),
+				UsageJSON:      `{}`,
+				CreatedAt:      now,
+				UpdatedAt:      now,
+			}, openAIResponseInputStoredItems(responseID, json.RawMessage(`"Hello"`), "Hello")); err != nil {
+				t.Fatalf("CreateOpenAIObjectWithItems: %v", err)
+			}
+			if err := store.CreateAPIUsage(&storage.APIUsageRecord{
+				ID:         "usage-openai-background-" + tt.name,
+				RequestID:  "req-openai-background-" + tt.name,
+				KeyID:      "key-test",
+				UserID:     "system",
+				Endpoint:   openAIUsageEndpointResponses,
+				JobID:      jobID,
+				Status:     storage.APIUsageStatusRunning,
+				HTTPStatus: http.StatusOK,
+				CreatedAt:  now,
+			}); err != nil {
+				t.Fatalf("CreateAPIUsage: %v", err)
+			}
+			if _, _, err := store.ReserveAPIIdempotency(&storage.APIIdempotencyRecord{
+				ID:                 "idem-openai-background-" + tt.name,
+				KeyID:              "key-test",
+				IdempotencyKey:     idempotencyKey,
+				RequestFingerprint: "fingerprint-" + tt.name,
+				JobID:              jobID,
+				CreatedAt:          now,
+				ExpiresAt:          now.Add(time.Hour),
+			}); err != nil {
+				t.Fatalf("ReserveAPIIdempotency: %v", err)
+			}
+
+			reconciled, err := api.reconcileTerminalOpenAIBackgroundResponses(context.Background(), 10)
+			if err != nil {
+				t.Fatalf("reconcileTerminalOpenAIBackgroundResponses: %v", err)
+			}
+			if reconciled != 1 {
+				t.Fatalf("reconciled = %d, want 1", reconciled)
+			}
+
+			record, err := store.GetOpenAIObject(responseID, "key-test")
+			if err != nil {
+				t.Fatalf("GetOpenAIObject: %v", err)
+			}
+			if record.Status != tt.wantObject || record.ErrorCode != tt.wantErrorCode || !strings.Contains(record.ErrorMessage, tt.wantErrorSubstr) {
+				t.Fatalf("record = %+v, want status=%q code=%q message containing %q", record, tt.wantObject, tt.wantErrorCode, tt.wantErrorSubstr)
+			}
+			if tt.jobError != "" && strings.Contains(record.ResponseJSON, tt.jobError) {
+				t.Fatalf("stored public response leaked internal job error %q: %s", tt.jobError, record.ResponseJSON)
+			}
+			var responsePayload map[string]any
+			if err := json.Unmarshal([]byte(record.ResponseJSON), &responsePayload); err != nil {
+				t.Fatalf("decode stored response: %v", err)
+			}
+			if responsePayload["status"] != tt.wantObject {
+				t.Fatalf("stored response status = %v, want %q", responsePayload["status"], tt.wantObject)
+			}
+
+			usages, err := store.ListAPIUsage(storage.APIUsageFilters{KeyID: "key-test", Endpoint: openAIUsageEndpointResponses, Limit: 10})
+			if err != nil {
+				t.Fatalf("ListAPIUsage: %v", err)
+			}
+			if len(usages) != 1 || usages[0].Status != tt.wantUsage || usages[0].ErrorCode != tt.wantErrorCode {
+				t.Fatalf("usage rows = %+v, want one %q row with code %q", usages, tt.wantUsage, tt.wantErrorCode)
+			}
+			idem, err := store.GetAPIIdempotency("key-test", idempotencyKey)
+			if err != nil {
+				t.Fatalf("GetAPIIdempotency: %v", err)
+			}
+			if idem.HTTPStatus != http.StatusOK || !strings.Contains(idem.ResponseBody, `"status":"`+tt.wantObject+`"`) {
+				t.Fatalf("idempotency = %+v, want terminal %q response body", idem, tt.wantObject)
+			}
+		})
+	}
+}
+
 func TestOpenAIResponsesBackgroundCancelStaysCancelled(t *testing.T) {
 	db, err := storage.NewStorage(":memory:")
 	if err != nil {
@@ -2186,12 +2717,13 @@ func TestOpenAIResponsesBackgroundCancelStaysCancelled(t *testing.T) {
 	}
 	defer db.Close()
 	registry := providers.NewRegistry()
+	release := make(chan struct{})
 	registry.Register(&SlowMockProvider{
 		name: "mock",
 		models: []providers.Model{
 			{ID: "mock-model", Provider: "mock", InputCost: 0.000001, OutputCost: 0.000002},
 		},
-		delay: 200 * time.Millisecond,
+		release: release,
 	})
 	manager := newTestJobManager(db, registry)
 	manager.StartWorkers()
@@ -2229,7 +2761,15 @@ func TestOpenAIResponsesBackgroundCancelStaysCancelled(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("cancel status = %d, want 200 body=%s", w.Code, w.Body.String())
 	}
-	time.Sleep(350 * time.Millisecond)
+	record, err := db.GetOpenAIObject(responseID, "key-test")
+	if err != nil {
+		t.Fatalf("GetOpenAIObject: %v", err)
+	}
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer waitCancel()
+	if _, err := manager.WaitForCompletion(waitCtx, record.JobID, record.WorkflowID); err != nil {
+		t.Fatalf("WaitForCompletion: %v", err)
+	}
 
 	req = httptest.NewRequest(http.MethodGet, "/v1/responses/"+responseID, nil)
 	req.Header.Set("Authorization", "Bearer "+key)
@@ -2261,12 +2801,13 @@ func TestOpenAIChatCompletionsStreamSendsFirstFrameAndDone(t *testing.T) {
 	}
 	defer db.Close()
 	registry := providers.NewRegistry()
+	release := make(chan struct{})
 	registry.Register(&SlowMockProvider{
 		name: "mock",
 		models: []providers.Model{
 			{ID: "mock-model", Provider: "mock", InputCost: 0.000001, OutputCost: 0.000002},
 		},
-		delay: 80 * time.Millisecond,
+		release: release,
 	})
 	manager := newTestJobManager(db, registry)
 	manager.StartWorkers()
@@ -2319,6 +2860,7 @@ func TestOpenAIChatCompletionsStreamSendsFirstFrameAndDone(t *testing.T) {
 	if !strings.HasPrefix(first, "data: ") || !strings.Contains(first, `"delta":{"role":"assistant"}`) {
 		t.Fatalf("first line = %q, want assistant role chunk", first)
 	}
+	close(release)
 	rest, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("read rest: %v", err)
@@ -2384,69 +2926,60 @@ func TestOpenAIChatCompletionsStreamCancelMarksUsageFailed(t *testing.T) {
 	}
 	defer db.Close()
 	registry := providers.NewRegistry()
+	started := make(chan struct{})
+	done := make(chan struct{})
 	registry.Register(&SlowMockProvider{
-		name: "mock",
-		models: []providers.Model{
-			{ID: "mock-model", Provider: "mock", InputCost: 0.000001, OutputCost: 0.000002},
-		},
-		delay: 500 * time.Millisecond,
+		name:    "mock",
+		models:  []providers.Model{{ID: "mock-model", Provider: "mock"}},
+		started: started,
+		done:    done,
+		release: make(chan struct{}),
 	})
 	manager := newTestJobManager(db, registry)
 	manager.StartWorkers()
 	defer manager.StopWorkers(context.Background())
 	api := NewWorkflowAPI(db, registry, manager)
 	key := createOpenAITestKey(t, db, "sk-consortium-test_123")
-	if err := db.UpsertAPIModelRoute(&storage.APIModelRoute{
-		APIModel:      "gpt-test",
-		Mode:          storage.APIModelRouteModeDirectModel,
-		ProviderModel: "mock-model",
-		IsDefault:     true,
-		Enabled:       true,
-	}); err != nil {
-		t.Fatalf("UpsertAPIModelRoute: %v", err)
-	}
+	upsertOpenAIDirectModelRoute(t, db)
 
 	router := mux.NewRouter()
 	api.RegisterRoutes(router)
-	server := httptest.NewServer(router)
-	defer server.Close()
-
 	ctx, cancel := context.WithCancel(context.Background())
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/v1/chat/completions", strings.NewReader(`{
+	defer cancel()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{
 		"model":"gpt-test",
 		"messages":[{"role":"user","content":"Say hello"}],
 		"stream":true
-	}`))
-	if err != nil {
-		t.Fatalf("NewRequest: %v", err)
-	}
+	}`)).WithContext(ctx)
 	req.Header.Set("Authorization", "Bearer "+key)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("Do: %v", err)
-	}
-	reader := bufio.NewReader(resp.Body)
-	first, err := reader.ReadString('\n')
-	if err != nil {
-		t.Fatalf("read first SSE line: %v", err)
-	}
-	if !strings.HasPrefix(first, "data: ") {
-		t.Fatalf("first line = %q, want SSE data", first)
+	rec := httptest.NewRecorder()
+	serveDone := make(chan struct{})
+	go func() {
+		router.ServeHTTP(rec, req)
+		close(serveDone)
+	}()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for the provider to start")
 	}
 	cancel()
-	_ = resp.Body.Close()
-
-	deadline := time.Now().Add(2 * time.Second)
-	var rows []storage.APIUsageRecord
-	for time.Now().Before(deadline) {
-		rows, err = db.ListAPIUsage(storage.APIUsageFilters{KeyID: "key-test", Limit: 10})
-		if err != nil {
-			t.Fatalf("ListAPIUsage: %v", err)
-		}
-		if len(rows) == 1 && rows[0].Status != storage.APIUsageStatusRunning {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
+	select {
+	case <-serveDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for streaming handler to finish")
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for provider cancellation")
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want initial streaming 200 body=%s", rec.Code, rec.Body.String())
+	}
+	rows, err := db.ListAPIUsage(storage.APIUsageFilters{KeyID: "key-test", Limit: 10})
+	if err != nil {
+		t.Fatalf("ListAPIUsage: %v", err)
 	}
 	if len(rows) != 1 {
 		t.Fatalf("usage rows = %d, want 1 rows=%+v", len(rows), rows)
@@ -3097,7 +3630,8 @@ func TestOpenAIIdempotencyKeyIsEndpointScoped(t *testing.T) {
 func TestOpenAIChatCompletionsConcurrentIdempotencyWaitsAndExecutesOnce(t *testing.T) {
 	api, store := setupWorkflowAPI(t)
 	provider := registerMockProvider(t, api, "Concurrent replay response")
-	provider.delay = 100 * time.Millisecond
+	provider.started = make(chan struct{})
+	provider.release = make(chan struct{})
 	key := createOpenAITestKey(t, store, "sk-consortium-test_123")
 	if err := store.UpsertAPIModelRoute(&storage.APIModelRoute{
 		APIModel:      "gpt-test",
@@ -3133,6 +3667,12 @@ func TestOpenAIChatCompletionsConcurrentIdempotencyWaitsAndExecutesOnce(t *testi
 		}(i)
 	}
 	close(start)
+	select {
+	case <-provider.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for first provider call")
+	}
+	close(provider.release)
 	wg.Wait()
 
 	for i, result := range results {

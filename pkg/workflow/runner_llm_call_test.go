@@ -307,8 +307,7 @@ func TestLLMCallRunner_SystemPromptInterpolation(t *testing.T) {
 }
 
 func TestLLMCallRunner_CancelledContext(t *testing.T) {
-	mock := NewMockProvider("test")
-	runner := newTestLLMCallRunner(mock)
+	runner := newTestLLMCallRunner(cancelAwareProvider{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
@@ -322,13 +321,34 @@ func TestLLMCallRunner_CancelledContext(t *testing.T) {
 
 	result, err := runner.Execute(sc)
 	if err == nil {
-		// Some providers may not check context; skip if it succeeds
-		t.Skip("provider did not honor cancelled context")
+		t.Fatal("expected cancelled provider request to fail")
 	}
 	if result.Success {
 		t.Error("expected failure result for cancelled context")
 	}
+	if result.Error != "node cancelled" {
+		t.Fatalf("error = %q, want node cancelled", result.Error)
+	}
 }
+
+// cancelAwareProvider makes cancellation behavior deterministic. The regular
+// MockProvider intentionally ignores context, which would make a cancellation
+// test depend on an implementation detail of the test double.
+type cancelAwareProvider struct{}
+
+func (cancelAwareProvider) Name() string { return "cancel-aware" }
+
+func (cancelAwareProvider) Models() []providers.Model {
+	return []providers.Model{{ID: "mock-model", Provider: "cancel-aware", Available: true}}
+}
+
+func (cancelAwareProvider) Complete(ctx context.Context, _ *providers.CompletionRequest) (*providers.CompletionResponse, error) {
+	return nil, ctx.Err()
+}
+
+func (cancelAwareProvider) EstimateTokens(string) int { return 0 }
+
+func (cancelAwareProvider) Cost(string, int, int) float64 { return 0 }
 
 func TestLLMCallRunner_ProviderError(t *testing.T) {
 	failProvider := NewAlwaysFailProvider("test", fmt.Errorf("provider exploded"))

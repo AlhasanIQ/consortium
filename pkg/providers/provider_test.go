@@ -1,54 +1,13 @@
 package providers
 
 import (
+	"encoding/json"
 	"testing"
 )
 
-func TestFloat64Ptr(t *testing.T) {
-	v := 0.7
-	p := Float64Ptr(v)
-	if p == nil {
-		t.Fatal("expected non-nil pointer")
-	}
-	if *p != v {
-		t.Errorf("expected %f, got %f", v, *p)
-	}
-}
-
-func TestFloat64Ptr_Zero(t *testing.T) {
-	p := Float64Ptr(0.0)
-	if p == nil {
-		t.Fatal("expected non-nil pointer for zero value")
-	}
-	if *p != 0.0 {
-		t.Errorf("expected 0.0, got %f", *p)
-	}
-}
-
-func TestIntPtr(t *testing.T) {
-	v := 42
-	p := IntPtr(v)
-	if p == nil {
-		t.Fatal("expected non-nil pointer")
-	}
-	if *p != v {
-		t.Errorf("expected %d, got %d", v, *p)
-	}
-}
-
-func TestBoolPtr(t *testing.T) {
-	pTrue := BoolPtr(true)
-	pFalse := BoolPtr(false)
-	if pTrue == nil || !*pTrue {
-		t.Error("BoolPtr(true) should return pointer to true")
-	}
-	if pFalse == nil || *pFalse {
-		t.Error("BoolPtr(false) should return pointer to false")
-	}
-}
-
-func TestModel_JSONFields(t *testing.T) {
-	m := Model{
+func TestProviderJSONContracts(t *testing.T) {
+	cost := 0.005
+	modelJSON, err := json.Marshal(Model{
 		ID:         "gpt-4",
 		Name:       "GPT-4",
 		Provider:   "openai",
@@ -57,24 +16,66 @@ func TestModel_JSONFields(t *testing.T) {
 		OutputCost: 0.00006,
 		MaxTokens:  4096,
 		Available:  true,
+	})
+	if err != nil {
+		t.Fatalf("marshal model: %v", err)
 	}
-	if m.ID != "gpt-4" {
-		t.Errorf("unexpected ID: %s", m.ID)
+	var model map[string]any
+	if err := json.Unmarshal(modelJSON, &model); err != nil {
+		t.Fatalf("decode model JSON: %v", err)
 	}
-	if !m.Available {
-		t.Error("expected Available to be true")
+	for key, want := range map[string]any{
+		"id":                    "gpt-4",
+		"provider":              "openai",
+		"context_length":        float64(128000),
+		"input_cost_per_token":  float64(0.00003),
+		"output_cost_per_token": float64(0.00006),
+		"max_tokens":            float64(4096),
+		"available":             true,
+	} {
+		if model[key] != want {
+			t.Fatalf("model[%q] = %#v, want %#v; JSON=%s", key, model[key], want, modelJSON)
+		}
 	}
-	if m.ContextLen != 128000 {
-		t.Errorf("unexpected ContextLen: %d", m.ContextLen)
+
+	usageJSON, err := json.Marshal(Usage{
+		PromptTokens:     100,
+		CompletionTokens: 50,
+		TotalTokens:      150,
+		Cost:             &cost,
+	})
+	if err != nil {
+		t.Fatalf("marshal usage: %v", err)
+	}
+	var usage map[string]any
+	if err := json.Unmarshal(usageJSON, &usage); err != nil {
+		t.Fatalf("decode usage JSON: %v", err)
+	}
+	if usage["prompt_tokens"] != float64(100) || usage["completion_tokens"] != float64(50) || usage["total_tokens"] != float64(150) {
+		t.Fatalf("usage token fields = %#v", usage)
+	}
+	if usage["cost"] != cost {
+		t.Fatalf("usage cost = %#v, want %v", usage["cost"], cost)
+	}
+
+	withoutCost, err := json.Marshal(Usage{PromptTokens: 1, CompletionTokens: 2, TotalTokens: 3})
+	if err != nil {
+		t.Fatalf("marshal usage without cost: %v", err)
+	}
+	var usageWithoutCost map[string]any
+	if err := json.Unmarshal(withoutCost, &usageWithoutCost); err != nil {
+		t.Fatalf("decode usage without cost JSON: %v", err)
+	}
+	if _, ok := usageWithoutCost["cost"]; ok {
+		t.Fatalf("usage without provider cost serialized cost: %s", withoutCost)
 	}
 }
 
-func TestCompletionRequest_Extensions(t *testing.T) {
-	req := CompletionRequest{
-		Model: "test-model",
-		Messages: []Message{
-			{Role: "user", Content: "hello"},
-		},
+func TestCompletionRequestJSONPreservesExplicitZeroAndExtensions(t *testing.T) {
+	requestJSON, err := json.Marshal(CompletionRequest{
+		Model:       "test-model",
+		Messages:    []Message{{Role: "user", Content: "hello"}},
+		Temperature: Float64Ptr(0),
 		Extensions: &ProviderExtensions{
 			Reasoning: &ReasoningConfig{Effort: "high"},
 			Seed:      IntPtr(42),
@@ -83,50 +84,30 @@ func TestCompletionRequest_Extensions(t *testing.T) {
 				AllowFallbacks: BoolPtr(false),
 			},
 		},
+	})
+	if err != nil {
+		t.Fatalf("marshal completion request: %v", err)
 	}
-	if req.Extensions == nil {
-		t.Fatal("expected Extensions to be set")
+	var request map[string]any
+	if err := json.Unmarshal(requestJSON, &request); err != nil {
+		t.Fatalf("decode completion request JSON: %v", err)
 	}
-	if req.Extensions.Reasoning.Effort != "high" {
-		t.Errorf("expected reasoning effort 'high', got %q", req.Extensions.Reasoning.Effort)
+	if request["temperature"] != float64(0) {
+		t.Fatalf("temperature = %#v, want explicit zero; JSON=%s", request["temperature"], requestJSON)
 	}
-	if *req.Extensions.Seed != 42 {
-		t.Errorf("expected seed 42, got %d", *req.Extensions.Seed)
+	extensions, ok := request["extensions"].(map[string]any)
+	if !ok {
+		t.Fatalf("extensions = %#v, want object", request["extensions"])
 	}
-	if req.Extensions.ProviderRouting.Only[0] != "openai" {
-		t.Errorf("unexpected provider routing")
+	if extensions["seed"] != float64(42) {
+		t.Fatalf("extensions.seed = %#v, want 42", extensions["seed"])
 	}
-}
-
-func TestUsage_NilCost(t *testing.T) {
-	u := Usage{
-		PromptTokens:     100,
-		CompletionTokens: 50,
-		TotalTokens:      150,
+	reasoning, ok := extensions["reasoning"].(map[string]any)
+	if !ok || reasoning["effort"] != "high" {
+		t.Fatalf("extensions.reasoning = %#v, want effort=high", extensions["reasoning"])
 	}
-	if u.Cost != nil {
-		t.Error("expected nil cost when not set")
-	}
-
-	cost := 0.005
-	u.Cost = &cost
-	if *u.Cost != 0.005 {
-		t.Errorf("expected cost 0.005, got %f", *u.Cost)
-	}
-}
-
-func TestProviderConfig_Fields(t *testing.T) {
-	cfg := ProviderConfig{
-		Name:   "openrouter",
-		APIKey: "sk-test",
-		Metadata: map[string]string{
-			"env": "test",
-		},
-	}
-	if cfg.Name != "openrouter" {
-		t.Errorf("unexpected name: %s", cfg.Name)
-	}
-	if cfg.Metadata["env"] != "test" {
-		t.Error("unexpected metadata")
+	routing, ok := extensions["provider"].(map[string]any)
+	if !ok || routing["allow_fallbacks"] != false {
+		t.Fatalf("extensions.provider = %#v, want allow_fallbacks=false", extensions["provider"])
 	}
 }

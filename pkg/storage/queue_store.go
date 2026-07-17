@@ -60,24 +60,10 @@ func (s *Storage) claimPendingDurableJob(ctx context.Context, scope durableQueue
 	backoff := 10 * time.Millisecond
 
 	for attempt := 1; attempt <= maxClaimAttempts; attempt++ {
-		var id string
-		err := s.db.QueryRowContext(ctx, pendingDurableJobSelectSQL(scope)).Scan(&id)
+		var claimedID string
+		err := s.db.QueryRowContext(ctx, pendingDurableJobClaimSQL(scope), time.Now()).Scan(&claimedID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
-		}
-		if err != nil {
-			return nil, fmt.Errorf("select pending durable job: %w", err)
-		}
-
-		var claimedID string
-		err = s.db.QueryRowContext(ctx, `
-			UPDATE jobs
-			SET status = 'running', updated_at = ?
-			WHERE id = ? AND status = 'pending'
-			RETURNING id
-		`, time.Now(), id).Scan(&claimedID)
-		if errors.Is(err, sql.ErrNoRows) {
-			continue
 		}
 		if err != nil {
 			if attempt < maxClaimAttempts && IsRetryableSQLiteError(err) && ctx.Err() == nil {
@@ -188,13 +174,19 @@ func (s *Storage) ListResumableDurableRunningJobs(ctx context.Context, excludeID
 	return results, nil
 }
 
-func pendingDurableJobSelectSQL(scope durableQueueScope) string {
+func pendingDurableJobClaimSQL(scope durableQueueScope) string {
 	return fmt.Sprintf(`
-		SELECT id
-		FROM jobs INDEXED BY %s
-		WHERE %s
-		ORDER BY created_at ASC, id ASC
-		LIMIT 1
+		UPDATE jobs
+		SET status = 'running', updated_at = ?
+		WHERE id = (
+			SELECT id
+			FROM jobs INDEXED BY %s
+			WHERE %s
+			ORDER BY created_at ASC, id ASC
+			LIMIT 1
+		)
+		AND status = 'pending'
+		RETURNING id
 	`, durableQueueIndex(events.JobStatusPending, scope), durableQueueWhere(events.JobStatusPending, scope))
 }
 

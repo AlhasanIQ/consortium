@@ -521,6 +521,101 @@ func TestManagerExecuteAgentRunResumesExistingExternalRun(t *testing.T) {
 	}
 }
 
+func TestManagerExecuteAgentRunReusesTerminalExternalRunWithoutResubmit(t *testing.T) {
+	manager, store := setupManagerTest(t)
+	createAgentRunManagerJob(t, store, "job-agent-terminal")
+
+	if err := store.UpsertAgentRun(context.Background(), &storage.AgentRun{
+		ID:               agentRunRowID("job-agent-terminal", "run-agent", "agent-node", 1),
+		JobID:            "job-agent-terminal",
+		ExecutionID:      "exec-agent-terminal",
+		RunID:            "run-agent",
+		NodeID:           "agent-node",
+		Attempt:          1,
+		RunKind:          "agent_run",
+		ExternalRunID:    "novomo-completed",
+		ExternalJobRunID: "jobrun-completed",
+		ExternalTaskID:   "task-completed",
+		Harness:          "claude-code",
+		Status:           "completed",
+		Output:           "persisted output",
+		TokensInput:      8,
+		TokensOutput:     5,
+		CostUSD:          0.17,
+	}); err != nil {
+		t.Fatalf("seed terminal agent run: %v", err)
+	}
+
+	client := &fakeNovomoRunClient{}
+	result, err := manager.executeAgentRunWithClient(context.Background(), &workflow.AgentRunRequest{
+		ParentJobID:       "job-agent-terminal",
+		ParentExecutionID: "exec-agent-terminal",
+		ParentRunID:       "run-agent",
+		ParentNodeID:      "agent-node",
+		Attempt:           1,
+		Prompt:            "must not submit again",
+		Harness:           "claude-code",
+		TimeoutSeconds:    30,
+		IdempotencyKey:    "job-agent-terminal:agent-node:1",
+	}, client, time.Millisecond)
+	if err != nil {
+		t.Fatalf("executeAgentRunWithClient failed: %v", err)
+	}
+	if !result.Success || result.ExternalRunID != "novomo-completed" || result.Output != "persisted output" || result.TokensInput != 8 || result.TokensOutput != 5 || result.Cost != 0.17 {
+		t.Fatalf("terminal persisted result was not preserved: %+v", result)
+	}
+	if client.submitCalls != 0 || client.getCalls != 0 {
+		t.Fatalf("terminal external run was contacted again: submit=%d get=%d", client.submitCalls, client.getCalls)
+	}
+}
+
+func TestManagerExecuteAgentRunPersistsRemoteFailureResult(t *testing.T) {
+	manager, store := setupManagerTest(t)
+	createAgentRunManagerJob(t, store, "job-agent-failed")
+	client := &fakeNovomoRunClient{
+		submitResp: &novomo.SubmitRunResponse{RunID: "novomo-failed", Status: novomo.StatusRunning},
+		getScript: []*novomo.Run{{
+			RunID:        "novomo-failed",
+			Status:       novomo.StatusFailed,
+			Output:       "partial output",
+			TokensInput:  6,
+			TokensOutput: 3,
+			CostUSD:      0.11,
+			ErrorCode:    "TASK_FAILED",
+			ErrorMessage: "agent task failed",
+		}},
+	}
+
+	result, err := manager.executeAgentRunWithClient(context.Background(), &workflow.AgentRunRequest{
+		ParentJobID:       "job-agent-failed",
+		ParentExecutionID: "exec-agent-failed",
+		ParentRunID:       "run-agent",
+		ParentNodeID:      "agent-node",
+		Attempt:           1,
+		Prompt:            "fail",
+		Harness:           "claude-code",
+		TimeoutSeconds:    30,
+		IdempotencyKey:    "job-agent-failed:agent-node:1",
+	}, client, time.Millisecond)
+	if err != nil {
+		t.Fatalf("executeAgentRunWithClient failed: %v", err)
+	}
+	if result.Success || result.Status != "failed" || result.ErrorCode != "TASK_FAILED" || result.Error != "agent task failed" {
+		t.Fatalf("remote failure was not preserved in result: %+v", result)
+	}
+	if result.Output != "partial output" || result.TokensInput != 6 || result.TokensOutput != 3 || result.Cost != 0.11 {
+		t.Fatalf("remote failure usage/output was not preserved: %+v", result)
+	}
+
+	rows, err := store.ListAgentRunsByJob(context.Background(), "job-agent-failed")
+	if err != nil {
+		t.Fatalf("ListAgentRunsByJob failed: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Status != "failed" || rows[0].ErrorCode != "TASK_FAILED" || rows[0].ErrorMessage != "agent task failed" || rows[0].Output != "partial output" {
+		t.Fatalf("remote failure was not persisted: %+v", rows)
+	}
+}
+
 func TestPollExternalAgentRunMarksCancelledOnContextCancel(t *testing.T) {
 	manager, store := setupManagerTest(t)
 	createAgentRunManagerJob(t, store, "job-agent")

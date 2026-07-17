@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"fmt"
 	"testing"
 )
 
@@ -126,27 +127,28 @@ func TestRegistry(t *testing.T) {
 		}
 	})
 
-	t.Run("concurrent access is thread-safe", func(t *testing.T) {
+	t.Run("concurrent registration preserves every provider and model", func(t *testing.T) {
 		registry := NewRegistry()
-		mock := &mockProvider{
-			name:   "concurrent",
-			models: []Model{{ID: "model1", Provider: "concurrent"}},
-		}
-
-		registry.Register(mock)
-
-		// Read from cache concurrently
-		done := make(chan bool, 100)
+		done := make(chan struct{}, 100)
 		for i := 0; i < 100; i++ {
+			i := i
 			go func() {
-				models := registry.GetModels()
-				_ = models
-				done <- true
+				registry.Register(&mockProvider{
+					name:   fmt.Sprintf("provider-%d", i),
+					models: []Model{{ID: fmt.Sprintf("model-%d", i), Provider: fmt.Sprintf("provider-%d", i)}},
+				})
+				done <- struct{}{}
 			}()
 		}
-
 		for i := 0; i < 100; i++ {
 			<-done
+		}
+
+		if got := len(registry.GetProviders()); got != 100 {
+			t.Fatalf("registered providers = %d, want 100", got)
+		}
+		if got := len(registry.GetModels()); got != 100 {
+			t.Fatalf("registered models = %d, want 100", got)
 		}
 	})
 
@@ -169,6 +171,11 @@ func TestRegistry(t *testing.T) {
 		}
 		if !names["provider1"] || !names["provider2"] {
 			t.Error("missing expected providers")
+		}
+
+		delete(providers, "provider1")
+		if _, err := registry.GetProvider("provider1"); err != nil {
+			t.Fatalf("mutating GetProviders result removed provider from registry: %v", err)
 		}
 	})
 

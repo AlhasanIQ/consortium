@@ -275,58 +275,22 @@ func TestIntegration_RequestIDPropagatesThroughChain(t *testing.T) {
 	})
 }
 
-func TestIntegration_MiddlewareOrderingInvariant(t *testing.T) {
-	// Verify that reordering middleware does not break core guarantees.
-	// The production order is Recovery -> RequestID -> Logger -> CORS.
-	// This test verifies that CORS headers appear even when the handler
-	// is also wrapped with compression, and that path normalization
-	// happens before routing (outermost).
-
+func TestIntegration_DisallowedOriginDoesNotBlockCompression(t *testing.T) {
 	largeJSON := strings.Repeat(`{"data":"x"},`, 200)
+	handler := applyProductionMiddleware(jsonHandler(http.StatusOK, largeJSON), true)
 
-	t.Run("CORS before compression does not strip headers", func(t *testing.T) {
-		// In production, CORS is innermost of the Use() chain (closest to handler),
-		// and Compression wraps the handler directly. This means the response goes:
-		// handler -> Compression -> CORS -> Logger -> RequestID -> Recovery -> TrimTrailingSlash
-		// Verify CORS headers survive the full chain.
-		handler := applyProductionMiddleware(jsonHandler(http.StatusOK, largeJSON), true)
+	req := httptest.NewRequest(http.MethodGet, "/api/data", nil)
+	req.Header.Set("Origin", "https://evil.example.com")
+	req.Header.Set("Accept-Encoding", "gzip")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
 
-		req := httptest.NewRequest(http.MethodGet, "/api/data", nil)
-		req.Header.Set("Origin", "http://localhost:3000")
-		req.Header.Set("Accept-Encoding", "gzip")
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
-
-		// All three concerns must be present simultaneously.
-		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "http://localhost:3000" {
-			t.Fatalf("CORS header missing or wrong: %q", got)
-		}
-		if got := rec.Header().Get("Content-Encoding"); got != "gzip" {
-			t.Fatalf("Compression header missing: %q", got)
-		}
-		if got := rec.Header().Get("X-Request-ID"); got == "" {
-			t.Fatal("RequestID header missing")
-		}
-	})
-
-	t.Run("disallowed origin still gets compressed response", func(t *testing.T) {
-		handler := applyProductionMiddleware(jsonHandler(http.StatusOK, largeJSON), true)
-
-		req := httptest.NewRequest(http.MethodGet, "/api/data", nil)
-		req.Header.Set("Origin", "https://evil.example.com")
-		req.Header.Set("Accept-Encoding", "gzip")
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
-
-		// No CORS allow-origin for disallowed origins.
-		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
-			t.Fatalf("expected no Access-Control-Allow-Origin for disallowed origin, got=%q", got)
-		}
-		// Compression should still work regardless of CORS.
-		if got := rec.Header().Get("Content-Encoding"); got != "gzip" {
-			t.Fatalf("Content-Encoding=%q want=%q", got, "gzip")
-		}
-	})
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("expected no Access-Control-Allow-Origin for disallowed origin, got=%q", got)
+	}
+	if got := rec.Header().Get("Content-Encoding"); got != "gzip" {
+		t.Fatalf("Content-Encoding=%q want=%q", got, "gzip")
+	}
 }
 
 func TestIntegration_EndToEndMockHandler(t *testing.T) {

@@ -28,7 +28,9 @@ type MockExecuteProvider struct {
 	err         error
 	failCount   int
 	toolCalls   []providers.ToolCall
-	delay       time.Duration
+	started     chan struct{}
+	release     chan struct{}
+	startOnce   sync.Once
 	mu          sync.Mutex
 	callCount   int
 	lastRequest *providers.CompletionRequest
@@ -55,12 +57,16 @@ func (m *MockExecuteProvider) Complete(ctx context.Context, req *providers.Compl
 	}
 	errorMsg := m.errorMsg
 	errValue := m.err
-	delay := m.delay
+	started := m.started
+	release := m.release
 	m.mu.Unlock()
 
-	if delay > 0 {
+	if started != nil {
+		m.startOnce.Do(func() { close(started) })
+	}
+	if release != nil {
 		select {
-		case <-time.After(delay):
+		case <-release:
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
@@ -91,9 +97,13 @@ func (m *MockExecuteProvider) CallCount() int {
 }
 
 type SlowMockProvider struct {
-	name   string
-	models []providers.Model
-	delay  time.Duration
+	name      string
+	models    []providers.Model
+	release   <-chan struct{}
+	started   chan struct{}
+	done      chan struct{}
+	startOnce sync.Once
+	doneOnce  sync.Once
 }
 
 func (m *SlowMockProvider) Name() string              { return m.name }
@@ -105,20 +115,28 @@ func (m *SlowMockProvider) Cost(model string, inputTokens, outputTokens int) flo
 	return float64(inputTokens)*0.000001 + float64(outputTokens)*0.000002
 }
 func (m *SlowMockProvider) Complete(ctx context.Context, req *providers.CompletionRequest) (*providers.CompletionResponse, error) {
-	select {
-	case <-time.After(m.delay):
-		return &providers.CompletionResponse{
-			Content: "Slow response",
-			Model:   req.Model,
-			Usage: providers.Usage{
-				PromptTokens:     10,
-				CompletionTokens: 20,
-				TotalTokens:      30,
-			},
-		}, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	if m.started != nil {
+		m.startOnce.Do(func() { close(m.started) })
 	}
+	if m.done != nil {
+		defer m.doneOnce.Do(func() { close(m.done) })
+	}
+	if m.release != nil {
+		select {
+		case <-m.release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return &providers.CompletionResponse{
+		Content: "Slow response",
+		Model:   req.Model,
+		Usage: providers.Usage{
+			PromptTokens:     10,
+			CompletionTokens: 20,
+			TotalTokens:      30,
+		},
+	}, nil
 }
 
 func setupWorkflowAPI(t *testing.T) (*WorkflowAPI, *storage.Storage) {

@@ -357,3 +357,163 @@ func TestCompleteOpenAIObjectWithItemsUsageAndIdempotencyIsAtomic(t *testing.T) 
 		t.Fatalf("idempotency changed after failed atomic completion: %+v", idem)
 	}
 }
+
+func TestCompleteOpenAIObjectWithItemsUsageAndIdempotencyByJobMissingUsageIsAtomic(t *testing.T) {
+	store, err := NewStorage(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	now := time.Now().UTC()
+	const (
+		responseID = "resp-by-job-no-usage"
+		jobID      = "job-by-job-no-usage"
+		initial    = `{"id":"resp-by-job-no-usage","status":"in_progress"}`
+		terminal   = `{"id":"resp-by-job-no-usage","status":"completed"}`
+	)
+	if err := store.CreateOpenAIObjectWithItems(&OpenAIObjectRecord{
+		ID:           responseID,
+		ObjectType:   OpenAIObjectTypeResponse,
+		KeyID:        "key-1",
+		UserID:       "system",
+		Endpoint:     "/v1/responses",
+		JobID:        jobID,
+		Status:       OpenAIObjectStatusInProgress,
+		Store:        true,
+		Background:   true,
+		ResponseJSON: initial,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}, []OpenAIObjectItem{
+		{ID: "input-before", ObjectID: responseID, ItemKind: OpenAIItemKindInput, ItemIndex: 0, ContentJSON: `{"text":"hello"}`, RawJSON: `{"role":"user","content":"hello"}`},
+	}); err != nil {
+		t.Fatalf("CreateOpenAIObjectWithItems: %v", err)
+	}
+	if _, _, err := store.ReserveAPIIdempotency(&APIIdempotencyRecord{
+		ID:                 "idem-by-job-no-usage",
+		KeyID:              "key-1",
+		IdempotencyKey:     "idem-key-by-job",
+		RequestFingerprint: "fingerprint",
+		JobID:              jobID,
+		ResponseBody:       initial,
+		HTTPStatus:         200,
+		CreatedAt:          now,
+		ExpiresAt:          now.Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("ReserveAPIIdempotency: %v", err)
+	}
+	if _, err := store.DB().Exec(`
+		CREATE TRIGGER reject_by_job_idempotency_completion
+		BEFORE UPDATE ON api_idempotency
+		WHEN OLD.id = 'idem-by-job-no-usage'
+		BEGIN
+			SELECT RAISE(ABORT, 'reject idempotency completion');
+		END
+	`); err != nil {
+		t.Fatalf("create idempotency trigger: %v", err)
+	}
+
+	completion := OpenAIObjectCompletion{
+		JobID:        jobID,
+		Status:       OpenAIObjectStatusCompleted,
+		ResponseJSON: terminal,
+		UsageJSON:    `{"total_tokens":3}`,
+		CompletedAt:  now.Add(time.Second),
+	}
+	replacementItems := []OpenAIObjectItem{
+		{ID: "output-after", ObjectID: responseID, ItemKind: OpenAIItemKindOutput, ItemIndex: 0, ContentJSON: `{"text":"done"}`, RawJSON: `{"role":"assistant","content":"done"}`},
+	}
+	usageCompletion := APIUsageCompletion{
+		JobID:        jobID,
+		Status:       APIUsageStatusSucceeded,
+		HTTPStatus:   200,
+		TokensInput:  1,
+		TokensOutput: 2,
+		TokensTotal:  3,
+		CompletedAt:  now.Add(time.Second),
+	}
+
+	err = store.CompleteOpenAIObjectWithItemsUsageAndIdempotencyByJob(
+		responseID,
+		"key-1",
+		completion,
+		replacementItems,
+		"/v1/responses",
+		jobID,
+		usageCompletion,
+		terminal,
+		200,
+	)
+	if err == nil {
+		t.Fatal("completion succeeded despite idempotency trigger")
+	}
+
+	obj, err := store.GetOpenAIObject(responseID, "key-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if obj.Status != OpenAIObjectStatusInProgress || obj.ResponseJSON != initial || obj.CompletedAt != nil {
+		t.Fatalf("object changed after failed no-usage transaction: %+v", obj)
+	}
+	items, _, err := store.ListOpenAIObjectItems(responseID, "key-1", OpenAIItemKindInput, OpenAIListPageRequest{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].ID != "input-before" {
+		t.Fatalf("items changed after failed no-usage transaction: %+v", items)
+	}
+	idem, err := store.GetAPIIdempotency("key-1", "idem-key-by-job")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if idem.ResponseBody != initial || idem.HTTPStatus != 200 {
+		t.Fatalf("idempotency changed after failed no-usage transaction: %+v", idem)
+	}
+
+	if _, err := store.DB().Exec(`DROP TRIGGER reject_by_job_idempotency_completion`); err != nil {
+		t.Fatalf("drop idempotency trigger: %v", err)
+	}
+	if err := store.CompleteOpenAIObjectWithItemsUsageAndIdempotencyByJob(
+		responseID,
+		"key-1",
+		completion,
+		replacementItems,
+		"/v1/responses",
+		jobID,
+		usageCompletion,
+		terminal,
+		200,
+	); err != nil {
+		t.Fatalf("complete without usage row: %v", err)
+	}
+
+	obj, err = store.GetOpenAIObject(responseID, "key-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if obj.Status != OpenAIObjectStatusCompleted || obj.ResponseJSON != terminal || obj.CompletedAt == nil {
+		t.Fatalf("object = %+v, want completed without usage row", obj)
+	}
+	items, _, err = store.ListOpenAIObjectItems(responseID, "key-1", OpenAIItemKindOutput, OpenAIListPageRequest{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].ID != "output-after" {
+		t.Fatalf("completed output items = %+v", items)
+	}
+	idem, err = store.GetAPIIdempotency("key-1", "idem-key-by-job")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if idem.ResponseBody != terminal || idem.HTTPStatus != 200 {
+		t.Fatalf("completed idempotency = %+v", idem)
+	}
+	usages, err := store.ListAPIUsage(APIUsageFilters{KeyID: "key-1", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(usages) != 0 {
+		t.Fatalf("usage rows = %+v, want none", usages)
+	}
+}

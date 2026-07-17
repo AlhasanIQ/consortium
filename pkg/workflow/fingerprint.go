@@ -8,7 +8,7 @@ import (
 )
 
 // normalizedNode is a canonical representation of a node's config for hashing.
-// Only config-relevant fields are included (no metadata, output_name, etc.).
+// Only execution-relevant fields are included. Cosmetic metadata is excluded.
 type normalizedNode struct {
 	NodeID                  string                   `json:"node_id"`
 	NodeType                string                   `json:"node_type"`
@@ -22,6 +22,11 @@ type normalizedNode struct {
 	MaxTokensSet            bool                     `json:"max_tokens_set"`
 	TimeoutSeconds          int                      `json:"timeout_seconds"`
 	TimeoutSecondsSet       bool                     `json:"timeout_seconds_set"`
+	RetryPolicy             *RetryPolicy             `json:"retry_policy,omitempty"`
+	TrueBranch              *normalizedNode          `json:"true_branch,omitempty"`
+	FalseBranch             *normalizedNode          `json:"false_branch,omitempty"`
+	OutputName              string                   `json:"output_name,omitempty"`
+	OutputFormat            string                   `json:"output_format,omitempty"`
 	TaskID                  string                   `json:"task_id,omitempty"`
 	TaskSummary             string                   `json:"task_summary,omitempty"`
 	Identity                string                   `json:"identity,omitempty"`
@@ -49,6 +54,7 @@ type normalizedNode struct {
 	ChildAwait              bool                     `json:"child_await,omitempty"`
 	ChildOutputKey          string                   `json:"child_output_key,omitempty"`
 	SourceWorkflowHash      string                   `json:"source_workflow_hash,omitempty"`
+	Metadata                map[string]interface{}   `json:"metadata,omitempty"`
 }
 
 // normalizedEdge is a canonical edge for hashing.
@@ -66,8 +72,9 @@ type normalizedConfig struct {
 
 // ComputeConfigHash produces a deterministic fingerprint of a workflow's
 // effective configuration. It hashes only explicitly provided node values,
-// sorts nodes by ID and edges by source+target, and excludes context
-// variables and cosmetic fields (name, description, workflow ID).
+// preserves node order when it defines an implicit sequence, normalizes nodes
+// for explicit graphs and edges by source+target, and excludes context variables
+// and cosmetic fields (name, description, workflow ID and display metadata).
 func ComputeConfigHash(wf *Workflow) string {
 	_, hash := normalizeAndHash(wf)
 	return hash
@@ -91,13 +98,16 @@ func normalize(wf *Workflow) *normalizedConfig {
 		Limits: wf.Limits,
 	}
 
-	// Normalize and sort nodes by ID
+	// Node order defines implicit sequential edges when no graph is supplied.
+	// With explicit edges, serialization order is not semantic and is normalized.
 	for _, s := range wf.Nodes {
 		nc.Nodes = append(nc.Nodes, normalizeNode(s))
 	}
-	sort.Slice(nc.Nodes, func(i, j int) bool {
-		return nc.Nodes[i].NodeID < nc.Nodes[j].NodeID
-	})
+	if len(wf.Edges) > 0 {
+		sort.Slice(nc.Nodes, func(i, j int) bool {
+			return nc.Nodes[i].NodeID < nc.Nodes[j].NodeID
+		})
+	}
 
 	// Normalize and sort edges by source, then target
 	for _, e := range wf.Edges {
@@ -208,6 +218,11 @@ func normalizeNode(s *Node) normalizedNode {
 		MaxTokensSet:            maxTokensSet,
 		TimeoutSeconds:          timeout,
 		TimeoutSecondsSet:       timeoutSet,
+		RetryPolicy:             s.RetryPolicy.Clone(),
+		TrueBranch:              normalizeOptionalNode(s.TrueBranch),
+		FalseBranch:             normalizeOptionalNode(s.FalseBranch),
+		OutputName:              s.OutputName,
+		OutputFormat:            s.OutputFormat,
 		TaskID:                  s.TaskID,
 		TaskSummary:             s.TaskSummary,
 		Identity:                s.Identity,
@@ -235,7 +250,35 @@ func normalizeNode(s *Node) normalizedNode {
 		ChildAwait:              s.ChildAwait,
 		ChildOutputKey:          s.ChildOutputKey,
 		SourceWorkflowHash:      metadataString(s.Metadata, "source_workflow_hash"),
+		Metadata:                semanticNodeMetadata(s.Metadata),
 	}
+}
+
+func normalizeOptionalNode(node *Node) *normalizedNode {
+	if node == nil {
+		return nil
+	}
+	normalized := normalizeNode(node)
+	return &normalized
+}
+
+func semanticNodeMetadata(metadata map[string]interface{}) map[string]interface{} {
+	if len(metadata) == 0 {
+		return nil
+	}
+	semantic := make(map[string]interface{}, len(metadata))
+	for key, value := range metadata {
+		switch key {
+		case "label", "name", "description":
+			continue
+		default:
+			semantic[key] = value
+		}
+	}
+	if len(semantic) == 0 {
+		return nil
+	}
+	return semantic
 }
 
 func metadataString(metadata map[string]interface{}, key string) string {

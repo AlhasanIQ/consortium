@@ -104,37 +104,87 @@ func (v *Validator) Validate(wf *Workflow) *ValidationResult {
 	return result
 }
 
-// validateVariables checks that all {{variable}} references are valid
+// validateVariables checks that all {{variable}} references are available when
+// the referencing node executes. Explicit-edge workflows derive availability
+// from transitive DAG ancestry. Workflows without edges preserve the legacy
+// sequential contract, where each node depends on the node before it.
 func (v *Validator) validateVariables(wf *Workflow) []ValidationError {
 	var errors []ValidationError
-	// Collect available variables (from context and previous nodes)
-	availableVars := make(map[string]bool)
+	contextVars := make(map[string]bool)
 	if wf.Context != nil {
 		for k := range wf.Context {
-			availableVars[k] = true
+			contextVars[k] = true
 		}
 	}
 
-	// For each node, check variable references
+	nodeIDs := make([]string, len(wf.Nodes))
+	knownNodeIDs := make(map[string]bool, len(wf.Nodes))
 	for i, node := range wf.Nodes {
-		nodeID := node.ID
+		nodeID := ""
+		if node != nil {
+			nodeID = node.ID
+		}
 		if nodeID == "" {
 			nodeID = fmt.Sprintf("node_%d", i)
 		}
+		nodeIDs[i] = nodeID
+		knownNodeIDs[nodeID] = true
+	}
 
-		errors = append(errors, validateSingleNodeVariables(node, nodeID, availableVars)...)
-
-		// Add this node's ID to available variables
-		if nodeID != "" {
-			availableVars[nodeID] = true
+	parents := effectiveVariableParents(wf, nodeIDs, knownNodeIDs)
+	for i, node := range wf.Nodes {
+		nodeID := nodeIDs[i]
+		availableVars := cloneAvailableVars(contextVars)
+		for ancestorID := range transitiveVariableAncestors(nodeID, parents) {
+			availableVars[ancestorID] = true
 		}
-		branchVars := cloneAvailableVars(availableVars)
-		errors = append(errors, validateBranchVariables(nodeID, "true", node.TrueBranch, branchVars)...)
-		errors = append(errors, validateBranchVariables(nodeID, "false", node.FalseBranch, branchVars)...)
-
+		errors = append(errors, validateSingleNodeVariables(node, nodeID, availableVars)...)
+		if node != nil {
+			errors = append(errors, validateBranchVariables(nodeID, "true", node.TrueBranch, availableVars)...)
+			errors = append(errors, validateBranchVariables(nodeID, "false", node.FalseBranch, availableVars)...)
+		}
 	}
 
 	return errors
+}
+
+func effectiveVariableParents(wf *Workflow, nodeIDs []string, knownNodeIDs map[string]bool) map[string][]string {
+	parents := make(map[string][]string, len(nodeIDs))
+	for _, nodeID := range nodeIDs {
+		parents[nodeID] = nil
+	}
+
+	if len(wf.Edges) == 0 {
+		for i := 1; i < len(nodeIDs); i++ {
+			parents[nodeIDs[i]] = append(parents[nodeIDs[i]], nodeIDs[i-1])
+		}
+		return parents
+	}
+
+	for _, edge := range wf.Edges {
+		if edge == nil || !knownNodeIDs[edge.Source] || !knownNodeIDs[edge.Target] {
+			continue
+		}
+		parents[edge.Target] = append(parents[edge.Target], edge.Source)
+	}
+	return parents
+}
+
+func transitiveVariableAncestors(nodeID string, parents map[string][]string) map[string]bool {
+	ancestors := make(map[string]bool)
+	stack := append([]string(nil), parents[nodeID]...)
+	for len(stack) > 0 {
+		last := len(stack) - 1
+		parentID := stack[last]
+		stack = stack[:last]
+		if ancestors[parentID] {
+			continue
+		}
+		ancestors[parentID] = true
+		stack = append(stack, parents[parentID]...)
+	}
+	delete(ancestors, nodeID)
+	return ancestors
 }
 
 func validateBranchVariables(parentID, branch string, node *Node, availableVars map[string]bool) []ValidationError {
@@ -144,13 +194,8 @@ func validateBranchVariables(parentID, branch string, node *Node, availableVars 
 	nodeID := branchNodeID(parentID, branch, node)
 	var errors []ValidationError
 	errors = append(errors, validateSingleNodeVariables(node, nodeID, availableVars)...)
-
-	branchVars := cloneAvailableVars(availableVars)
-	if nodeID != "" {
-		branchVars[nodeID] = true
-	}
-	errors = append(errors, validateBranchVariables(nodeID, "true", node.TrueBranch, branchVars)...)
-	errors = append(errors, validateBranchVariables(nodeID, "false", node.FalseBranch, branchVars)...)
+	errors = append(errors, validateBranchVariables(nodeID, "true", node.TrueBranch, availableVars)...)
+	errors = append(errors, validateBranchVariables(nodeID, "false", node.FalseBranch, availableVars)...)
 	return errors
 }
 
@@ -168,7 +213,7 @@ func validateSingleNodeVariables(node *Node, nodeID string, availableVars map[st
 				errors = append(errors, ValidationError{
 					Field:   "prompt",
 					NodeID:  nodeID,
-					Message: fmt.Sprintf("Variable '{{%s}}' not found in context or previous nodes", varName),
+					Message: fmt.Sprintf("Variable '{{%s}}' not found in context or dependency ancestors", varName),
 				})
 			}
 		}
@@ -180,7 +225,7 @@ func validateSingleNodeVariables(node *Node, nodeID string, availableVars map[st
 			errors = append(errors, ValidationError{
 				Field:   "source_variable",
 				NodeID:  nodeID,
-				Message: fmt.Sprintf("Source variable '%s' not found in context or previous nodes", sourceVar),
+				Message: fmt.Sprintf("Source variable '%s' not found in context or dependency ancestors", sourceVar),
 			})
 		}
 	}
@@ -192,7 +237,7 @@ func validateSingleNodeVariables(node *Node, nodeID string, availableVars map[st
 				errors = append(errors, ValidationError{
 					Field:   "condition",
 					NodeID:  nodeID,
-					Message: fmt.Sprintf("Condition variable '%s' not found in context or previous nodes", varName),
+					Message: fmt.Sprintf("Condition variable '%s' not found in context or dependency ancestors", varName),
 				})
 			}
 		}
@@ -207,7 +252,7 @@ func validateSingleNodeVariables(node *Node, nodeID string, availableVars map[st
 					errors = append(errors, ValidationError{
 						Field:   "child_input_template",
 						NodeID:  nodeID,
-						Message: fmt.Sprintf("Variable '{{%s}}' not found in context or previous nodes", varName),
+						Message: fmt.Sprintf("Variable '{{%s}}' not found in context or dependency ancestors", varName),
 					})
 				}
 			}

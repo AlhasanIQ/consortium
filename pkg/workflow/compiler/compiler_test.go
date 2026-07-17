@@ -90,6 +90,59 @@ func TestCompileNoWorkflowRefsIsNoop(t *testing.T) {
 	}
 }
 
+func TestCompileRejectsNilWorkflow(t *testing.T) {
+	_, _, err := Compile(context.Background(), nil, StaticResolver{})
+	if err == nil || !strings.Contains(err.Error(), "workflow is nil") {
+		t.Fatalf("Compile error = %v, want nil-workflow contract error", err)
+	}
+}
+
+func TestCompileReferenceExpansionHasDeterministicEffectiveConfig(t *testing.T) {
+	parent := &workflow.Workflow{
+		ID: "parent",
+		Nodes: []*workflow.Node{
+			{ID: "left", Type: workflow.NodeTypeWorkflowRef, WorkflowRefID: "left-source"},
+			{ID: "right", Type: workflow.NodeTypeWorkflowRef, WorkflowRefID: "right-source"},
+		},
+		Edges: []*workflow.Edge{{ID: "left-right", Source: "left", Target: "right"}},
+	}
+	resolver := StaticResolver{
+		"left-source": {
+			ID:    "left-source",
+			Nodes: []*workflow.Node{testPromptNode("a"), testPromptNode("b")},
+			Edges: []*workflow.Edge{{ID: "a-b", Source: "a", Target: "b"}},
+		},
+		"right-source": {
+			ID:    "right-source",
+			Nodes: []*workflow.Node{testPromptNode("c"), testPromptNode("d")},
+			Edges: []*workflow.Edge{{ID: "c-d", Source: "c", Target: "d"}},
+		},
+	}
+
+	first, firstReport, err := Compile(context.Background(), parent, resolver)
+	if err != nil {
+		t.Fatalf("first compile failed: %v", err)
+	}
+	second, secondReport, err := Compile(context.Background(), parent, resolver)
+	if err != nil {
+		t.Fatalf("second compile failed: %v", err)
+	}
+
+	if got, want := workflow.ComputeConfigHash(first), workflow.ComputeConfigHash(second); got != want {
+		t.Fatalf("compiled effective config hash changed between runs: first=%s second=%s", got, want)
+	}
+	if len(firstReport.ExpandedRefs) != len(secondReport.ExpandedRefs) {
+		t.Fatalf("expanded reference count changed: first=%d second=%d", len(firstReport.ExpandedRefs), len(secondReport.ExpandedRefs))
+	}
+	for i := range firstReport.ExpandedRefs {
+		if firstReport.ExpandedRefs[i].NodeID != secondReport.ExpandedRefs[i].NodeID ||
+			firstReport.ExpandedRefs[i].WorkflowID != secondReport.ExpandedRefs[i].WorkflowID ||
+			strings.Join(firstReport.ExpandedRefs[i].ExpandedNodeIDs, ",") != strings.Join(secondReport.ExpandedRefs[i].ExpandedNodeIDs, ",") {
+			t.Fatalf("compile report changed at index %d: first=%+v second=%+v", i, firstReport.ExpandedRefs[i], secondReport.ExpandedRefs[i])
+		}
+	}
+}
+
 func TestCompilePreservesExplicitRuntimeChildWorkflow(t *testing.T) {
 	parent := workflow.Workflow{
 		ID: "parent",

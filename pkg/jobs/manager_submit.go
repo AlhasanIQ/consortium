@@ -46,7 +46,7 @@ type SubmitWorkflowResponse struct {
 }
 
 // computeRequestHash generates a SHA256 hash of the workflow request for deduplication.
-// It combines the config hash (nodes, edges, limits, temperatures — sorted and default-filled)
+// It combines the config hash (semantic nodes, graph ordering, limits, and execution controls)
 // with context variables and workflow name to produce a complete execution-shape hash.
 // It also returns the configHash to avoid redundant recomputation by the caller.
 func computeRequestHash(wf *workflow.Workflow) (requestHash, configHash string) {

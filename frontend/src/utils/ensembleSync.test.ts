@@ -20,6 +20,42 @@ function fileWith(nodes: Node<NodeData>[]): WorkflowFileFormat {
 }
 
 describe('buildExecutionRequest', () => {
+  it('preserves request identity, interpolates reserved prompt variables, and keeps unknown variables', () => {
+    const file = {
+      ...fileWith([
+        {
+          id: 'agent-1',
+          type: 'agent',
+          position: { x: 0, y: 0 },
+          data: {
+            type: 'agent',
+            label: 'Agent',
+            config: {
+              model: 'openai/gpt-5-mini',
+              systemPrompt: 'Answer {{user_prompt}}; preserve {{bookname}}.',
+              userPrompt: 'Use the explicit user prompt',
+            },
+          },
+        },
+      ]),
+      id: 'workflow-123',
+      name: 'Saved workflow',
+    };
+
+    const request = buildExecutionRequest(file, 'the live question');
+    const agent = request.nodes.find((node) => node.id === 'agent-1');
+
+    expect(request).toMatchObject({
+      id: 'workflow-123',
+      name: 'Saved workflow',
+      context: { user_prompt: 'the live question' },
+    });
+    expect(agent).toMatchObject({
+      prompt: 'Use the explicit user prompt',
+      system_prompt: 'Answer the live question; preserve {{bookname}}.',
+    });
+  });
+
   it('emits explicit temperature/max_tokens/timeout_seconds/retry_policy for agent nodes', () => {
     const file = fileWith([
       {

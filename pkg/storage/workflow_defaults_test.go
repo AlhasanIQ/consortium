@@ -214,9 +214,12 @@ func TestGetSeedWorkflowJSONByID(t *testing.T) {
 		t.Fatalf("NewStorage: %v", err)
 	}
 
-	seeds, _ := store.GetSeedWorkflows()
+	seeds, err := store.GetSeedWorkflows()
+	if err != nil {
+		t.Fatalf("GetSeedWorkflows: %v", err)
+	}
 	if len(seeds) == 0 {
-		t.Skip("no seed workflows available")
+		t.Fatal("embedded seed workflows are unexpectedly empty")
 	}
 
 	// Test with valid ID

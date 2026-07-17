@@ -1774,7 +1774,6 @@ func (api *WorkflowAPI) logOpenAIBackgroundReconcile(ctx context.Context, limit 
 	reconciled, err := api.reconcileTerminalOpenAIBackgroundResponses(ctx, limit)
 	if err != nil && !errors.Is(err, context.Canceled) {
 		log.Printf("OpenAI background reconcile failed: %v", err)
-		return
 	}
 	if reconciled > 0 {
 		log.Printf("OpenAI background reconcile completed %d terminal response(s)", reconciled)
@@ -1790,22 +1789,25 @@ func (api *WorkflowAPI) reconcileTerminalOpenAIBackgroundResponses(ctx context.C
 		return 0, err
 	}
 	reconciled := 0
+	var reconcileErrs []error
 	for i := range records {
 		select {
 		case <-ctx.Done():
-			return reconciled, ctx.Err()
+			reconcileErrs = append(reconcileErrs, ctx.Err())
+			return reconciled, errors.Join(reconcileErrs...)
 		default:
 		}
 		before := records[i].Status
 		updated, err := api.reconcileOpenAIBackgroundResponseIfTerminal(&records[i])
 		if err != nil {
-			return reconciled, err
+			reconcileErrs = append(reconcileErrs, fmt.Errorf("reconcile OpenAI background response %s (job %s): %w", records[i].ID, records[i].JobID, err))
+			continue
 		}
 		if updated != nil && before == storage.OpenAIObjectStatusInProgress && updated.Status != storage.OpenAIObjectStatusInProgress {
 			reconciled++
 		}
 	}
-	return reconciled, nil
+	return reconciled, errors.Join(reconcileErrs...)
 }
 
 func (api *WorkflowAPI) reconcileOpenAIBackgroundResponseIfTerminal(record *storage.OpenAIObjectRecord) (*storage.OpenAIObjectRecord, error) {
@@ -1911,30 +1913,9 @@ func (api *WorkflowAPI) reconcileOpenAIBackgroundResponseIfTerminal(record *stor
 		string(respJSON),
 		http.StatusOK,
 	); err != nil {
-		if !errors.Is(err, storage.ErrNotFound) {
-			return nil, err
-		}
-		if fallbackErr := api.reconcileOpenAIBackgroundResponseCompletedWithoutUsage(record, string(respJSON), string(usageJSON), items, completedAt); fallbackErr != nil {
-			return nil, fallbackErr
-		}
+		return nil, err
 	}
 	return api.storage.GetOpenAIObject(record.ID, record.KeyID)
-}
-
-func (api *WorkflowAPI) reconcileOpenAIBackgroundResponseCompletedWithoutUsage(record *storage.OpenAIObjectRecord, respJSON, usageJSON string, items []storage.OpenAIObjectItem, completedAt time.Time) error {
-	if err := api.storage.UpdateOpenAIObjectCompletion(record.ID, record.KeyID, storage.OpenAIObjectCompletion{
-		JobID:        record.JobID,
-		Status:       storage.OpenAIObjectStatusCompleted,
-		ResponseJSON: respJSON,
-		UsageJSON:    usageJSON,
-		CompletedAt:  completedAt,
-	}); err != nil {
-		return err
-	}
-	if err := api.storage.ReplaceOpenAIObjectItems(record.ID, record.KeyID, items); err != nil {
-		return err
-	}
-	return nil
 }
 
 func (api *WorkflowAPI) reconcileOpenAIBackgroundResponseCancelled(record *storage.OpenAIObjectRecord) error {

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -48,6 +49,83 @@ func TestEventStore_GetLatestSequenceAndCount(t *testing.T) {
 	}
 	if count != 3 {
 		t.Fatalf("expected event count 3, got %d", count)
+	}
+}
+
+func TestEventStore_ConcurrentAppendsProduceUniqueOrderedSequences(t *testing.T) {
+	store, err := NewStorage(":memory:")
+	if err != nil {
+		t.Fatalf("new storage failed: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	jobID := "event-concurrent-job"
+	createTestJob(t, store, jobID)
+
+	const workers = 24
+	start := make(chan struct{})
+	errCh := make(chan error, workers)
+	seqCh := make(chan int64, workers)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		worker := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			event, err := store.AppendEvent(ctx, jobID, events.EventStatus, map[string]interface{}{"worker": worker})
+			if err != nil {
+				errCh <- err
+				return
+			}
+			seqCh <- event.Sequence
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errCh)
+	close(seqCh)
+
+	for err := range errCh {
+		t.Fatalf("concurrent AppendEvent failed: %v", err)
+	}
+	seen := make(map[int64]bool, workers)
+	for sequence := range seqCh {
+		if seen[sequence] {
+			t.Fatalf("duplicate returned event sequence %d", sequence)
+		}
+		seen[sequence] = true
+	}
+	if len(seen) != workers {
+		t.Fatalf("returned %d event sequences, want %d", len(seen), workers)
+	}
+	for sequence := int64(1); sequence <= workers; sequence++ {
+		if !seen[sequence] {
+			t.Fatalf("returned event sequences missing %d: %v", sequence, seen)
+		}
+	}
+
+	events, err := store.GetEventsAfter(ctx, jobID, 0)
+	if err != nil {
+		t.Fatalf("GetEventsAfter: %v", err)
+	}
+	if len(events) != workers {
+		t.Fatalf("persisted %d events, want %d", len(events), workers)
+	}
+	for i, event := range events {
+		wantSequence := int64(i + 1)
+		if event.Sequence != wantSequence {
+			t.Fatalf("persisted event %d has sequence %d, want %d", i, event.Sequence, wantSequence)
+		}
+	}
+
+	latest, err := store.GetLatestSequence(ctx, jobID)
+	if err != nil {
+		t.Fatalf("GetLatestSequence: %v", err)
+	}
+	if latest != workers {
+		t.Fatalf("latest sequence = %d, want %d", latest, workers)
 	}
 }
 

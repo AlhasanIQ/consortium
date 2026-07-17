@@ -45,6 +45,10 @@ type CanonicalNode struct {
 	Temperature             *float64                   `json:"temperature,omitempty"`
 	MaxTokens               int                        `json:"max_tokens,omitempty"`
 	TimeoutSeconds          int                        `json:"timeout_seconds,omitempty"`
+	RetryPolicy             interface{}                `json:"retry_policy,omitempty"`
+	TrueBranch              interface{}                `json:"true_branch,omitempty"`
+	FalseBranch             interface{}                `json:"false_branch,omitempty"`
+	OutputFormat            string                     `json:"output_format,omitempty"`
 	TaskID                  string                     `json:"task_id,omitempty"`
 	TaskSummary             string                     `json:"task_summary,omitempty"`
 	Identity                string                     `json:"identity,omitempty"`
@@ -125,6 +129,10 @@ type NodeForFreeze struct {
 	Temperature             *float64
 	MaxTokens               int
 	TimeoutSeconds          int
+	RetryPolicy             interface{}
+	TrueBranch              interface{}
+	FalseBranch             interface{}
+	OutputFormat            string
 	TaskID                  string
 	TaskSummary             string
 	Identity                string
@@ -193,6 +201,10 @@ func FreezeWorkflow(
 			})
 		}
 	} else {
+		// Explicit graph dependencies make serialized node order non-semantic.
+		sort.Slice(canonicalNodes, func(i, j int) bool {
+			return canonicalNodes[i].ID < canonicalNodes[j].ID
+		})
 		// Explicit edges: normalize to deterministic order (sorted by source, then target)
 		canonicalEdges = make([]CanonicalEdge, len(edges))
 		for i, e := range edges {

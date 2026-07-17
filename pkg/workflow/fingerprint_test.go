@@ -33,19 +33,35 @@ func TestComputeConfigHash_Deterministic(t *testing.T) {
 	}
 }
 
-func TestComputeConfigHash_NodeOrderIndependent(t *testing.T) {
+func TestComputeConfigHash_ExplicitGraphNodeOrderIndependent(t *testing.T) {
+	edges := []*Edge{{Source: "a", Target: "b"}}
+	wf1 := makeTestWorkflow([]*Node{
+		{ID: "a", Type: NodeTypePrompt, Model: "m1", Prompt: "p1"},
+		{ID: "b", Type: NodeTypePrompt, Model: "m2", Prompt: "p2"},
+	}, edges, nil)
+
+	wf2 := makeTestWorkflow([]*Node{
+		{ID: "b", Type: NodeTypePrompt, Model: "m2", Prompt: "p2"},
+		{ID: "a", Type: NodeTypePrompt, Model: "m1", Prompt: "p1"},
+	}, edges, nil)
+
+	if ComputeConfigHash(wf1) != ComputeConfigHash(wf2) {
+		t.Error("explicit graph hash should be independent of serialized node order")
+	}
+}
+
+func TestComputeConfigHash_ImplicitSequenceDependsOnNodeOrder(t *testing.T) {
 	wf1 := makeTestWorkflow([]*Node{
 		{ID: "a", Type: NodeTypePrompt, Model: "m1", Prompt: "p1"},
 		{ID: "b", Type: NodeTypePrompt, Model: "m2", Prompt: "p2"},
 	}, nil, nil)
-
 	wf2 := makeTestWorkflow([]*Node{
 		{ID: "b", Type: NodeTypePrompt, Model: "m2", Prompt: "p2"},
 		{ID: "a", Type: NodeTypePrompt, Model: "m1", Prompt: "p1"},
 	}, nil, nil)
 
-	if ComputeConfigHash(wf1) != ComputeConfigHash(wf2) {
-		t.Error("hash should be independent of node order")
+	if ComputeConfigHash(wf1) == ComputeConfigHash(wf2) {
+		t.Error("node order defines execution order when explicit edges are absent")
 	}
 }
 
@@ -84,6 +100,105 @@ func TestComputeConfigHash_ExplicitVsUnsetDiffer(t *testing.T) {
 
 	if ComputeConfigHash(wf1) == ComputeConfigHash(wf2) {
 		t.Error("explicit values should differ from unset values")
+	}
+}
+
+func TestComputeConfigHash_RetryPolicyAffectsExecutionIdentity(t *testing.T) {
+	base := makeTestWorkflow([]*Node{{
+		ID:          "s1",
+		Type:        NodeTypePrompt,
+		Model:       "openai/gpt-4o",
+		RetryPolicy: &RetryPolicy{MaxAttempts: 1},
+	}}, nil, nil)
+
+	tests := []struct {
+		name   string
+		policy *RetryPolicy
+	}{
+		{
+			name:   "attempt count",
+			policy: &RetryPolicy{MaxAttempts: 3},
+		},
+		{
+			name: "retryable errors",
+			policy: &RetryPolicy{
+				MaxAttempts:     1,
+				RetryableErrors: []string{"RATE_LIMIT"},
+			},
+		},
+		{
+			name: "adaptive reasoning",
+			policy: &RetryPolicy{
+				MaxAttempts: 1,
+				AdaptiveReasoning: &AdaptiveReasoningPolicy{
+					ActivateAfterConsecutive: 2,
+					Ladder:                   []string{"high", "low", "none"},
+				},
+			},
+		},
+	}
+
+	baseHash := ComputeConfigHash(base)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			changed := makeTestWorkflow([]*Node{{
+				ID:          "s1",
+				Type:        NodeTypePrompt,
+				Model:       "openai/gpt-4o",
+				RetryPolicy: tt.policy,
+			}}, nil, nil)
+			if got := ComputeConfigHash(changed); got == baseHash {
+				t.Fatalf("retry policy change did not affect config hash: %s", got)
+			}
+		})
+	}
+}
+
+func TestComputeConfigHash_RuntimeSemanticsExcludeOnlyCosmeticMetadata(t *testing.T) {
+	makeWorkflow := func() *Workflow {
+		return makeTestWorkflow([]*Node{{
+			ID:           "decision",
+			Type:         NodeTypeConditional,
+			Condition:    "{{answer}} == yes",
+			TrueBranch:   &Node{Type: NodeTypeResult, OutputName: "accepted"},
+			FalseBranch:  &Node{Type: NodeTypeResult, OutputName: "rejected"},
+			OutputName:   "decision",
+			OutputFormat: "text",
+			Metadata: map[string]interface{}{
+				"label": "Decision",
+				"tools": []interface{}{map[string]interface{}{"type": "function", "name": "lookup"}},
+			},
+		}}, nil, nil)
+	}
+
+	base := makeWorkflow()
+	baseHash := ComputeConfigHash(base)
+	changes := []struct {
+		name   string
+		mutate func(*Node)
+	}{
+		{name: "true branch", mutate: func(n *Node) { n.TrueBranch.OutputName = "changed" }},
+		{name: "false branch", mutate: func(n *Node) { n.FalseBranch.OutputName = "changed" }},
+		{name: "output format", mutate: func(n *Node) { n.OutputFormat = "json" }},
+		{name: "tools", mutate: func(n *Node) {
+			n.Metadata["tools"] = []interface{}{map[string]interface{}{"type": "function", "name": "different"}}
+		}},
+	}
+	for _, tt := range changes {
+		t.Run(tt.name, func(t *testing.T) {
+			changed := makeWorkflow()
+			tt.mutate(changed.Nodes[0])
+			if got := ComputeConfigHash(changed); got == baseHash {
+				t.Fatalf("%s change did not affect config hash", tt.name)
+			}
+		})
+	}
+
+	cosmetic := makeWorkflow()
+	cosmetic.Nodes[0].Metadata["label"] = "Renamed for display"
+	cosmetic.Nodes[0].Metadata["description"] = "Cosmetic help text"
+	if got := ComputeConfigHash(cosmetic); got != baseHash {
+		t.Fatalf("cosmetic metadata changed config hash: %s != %s", got, baseHash)
 	}
 }
 
@@ -322,20 +437,28 @@ func TestComputeConfigHash_DifferentLimits(t *testing.T) {
 	}
 }
 
-func TestComputeConfigHash_NilLimitsSameAsZero(t *testing.T) {
-	nodes := []*Node{
-		{ID: "s1", Type: NodeTypePrompt},
+func TestNormalizeForDisplayUsesCanonicalOrderingAndHash(t *testing.T) {
+	temp := 0.25
+	wf := makeTestWorkflow([]*Node{
+		{ID: "z", Type: NodeTypePrompt, Model: "m-z", Temperature: &temp, MaxTokens: 128, TimeoutSeconds: 30},
+		{ID: "a", Type: NodeTypeResult, AggregationMethod: AggMethodCollect},
+	}, []*Edge{
+		{Source: "z", Target: "a"},
+	}, nil)
+
+	display := NormalizeForDisplay(wf)
+	if display.ConfigHash != ComputeConfigHash(wf) {
+		t.Fatalf("display hash = %q, ComputeConfigHash = %q", display.ConfigHash, ComputeConfigHash(wf))
 	}
-
-	wf1 := makeTestWorkflow(nodes, nil, nil)
-	wf2 := makeTestWorkflow(nodes, nil, &CostLimits{})
-
-	// Both represent "no limits" — nil and zero-value CostLimits should NOT
-	// produce the same hash because json.Marshal treats nil and {} differently.
-	// This is acceptable: the diff engine handles this correctly.
-	_ = ComputeConfigHash(wf1)
-	_ = ComputeConfigHash(wf2)
-	// No assertion — just verifying no panic
+	if len(display.Nodes) != 2 || display.Nodes[0].NodeID != "a" || display.Nodes[1].NodeID != "z" {
+		t.Fatalf("display nodes are not sorted by node ID: %+v", display.Nodes)
+	}
+	if len(display.Edges) != 1 || display.Edges[0].Source != "z" || display.Edges[0].Target != "a" {
+		t.Fatalf("display edges are not preserved in canonical form: %+v", display.Edges)
+	}
+	if display.Nodes[1].Temperature != temp || display.Nodes[1].MaxTokens != 128 || display.Nodes[1].TimeoutSeconds != 30 {
+		t.Fatalf("display omitted effective node settings: %+v", display.Nodes[1])
+	}
 }
 
 func TestComputeConfigHash_ExcludesWorkflowID(t *testing.T) {

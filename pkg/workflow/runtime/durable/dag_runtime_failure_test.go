@@ -271,6 +271,7 @@ func TestDAGRuntime_RetryExhaustionEmitsEventsAndFails(t *testing.T) {
 	)
 	registry.Register(handler)
 	dagRuntime := NewDAGRuntime(store, registry)
+	dagRuntime.sleepFn = func(context.Context, time.Duration) bool { return true }
 
 	wf := &workflow.Workflow{
 		ID:   "wf-retry-exhaust",
@@ -364,6 +365,12 @@ func TestDAGRuntime_CancelDuringBackoffViaRuntimeCancel(t *testing.T) {
 	handler := newScriptedLLMHandler(scriptedNode{success: false, err: "TIMEOUT: fail", errorCode: "TIMEOUT"})
 	registry.Register(handler)
 	dagRuntime := NewDAGRuntime(store, registry)
+	backoffEntered := make(chan struct{}, 1)
+	dagRuntime.sleepFn = func(ctx context.Context, _ time.Duration) bool {
+		backoffEntered <- struct{}{}
+		<-ctx.Done()
+		return false
+	}
 
 	wf := &workflow.Workflow{
 		ID:   "wf-backoff-cancel",
@@ -388,7 +395,6 @@ func TestDAGRuntime_CancelDuringBackoffViaRuntimeCancel(t *testing.T) {
 	createDurableJobForTest(t, store, jobID, wf, snapshot)
 
 	var cancelOnce sync.Once
-	start := time.Now()
 	err := dagRuntime.Start(context.Background(), &runtime.StartParams{
 		Identity: &runtime.ExecutionIdentity{
 			WorkflowExecutionID: jobID,
@@ -410,9 +416,10 @@ func TestDAGRuntime_CancelDuringBackoffViaRuntimeCancel(t *testing.T) {
 		t.Fatalf("runtime start failed: %v", err)
 	}
 
-	elapsed := time.Since(start)
-	if elapsed > time.Second {
-		t.Fatalf("cancellation took too long: %v", elapsed)
+	select {
+	case <-backoffEntered:
+	default:
+		t.Fatal("expected retry backoff to be entered before cancellation")
 	}
 
 	if handler.CallCount() != 1 {
@@ -513,7 +520,7 @@ func TestDAGRuntime_StuckActivityCancelsCleanly(t *testing.T) {
 func TestDAGRuntime_HeartbeatTimeoutFailsActivity(t *testing.T) {
 	store := newTestStore(t)
 	registry := runtime.NewActivityHandlerRegistry()
-	handler := newScriptedLLMHandler(scriptedNode{success: true, output: "too-late", delay: 200 * time.Millisecond})
+	handler := newScriptedLLMHandler(scriptedNode{blockUntilCancel: true})
 	registry.Register(handler)
 	dagRuntime := NewDAGRuntime(store, registry)
 

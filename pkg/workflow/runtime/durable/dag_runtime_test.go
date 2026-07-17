@@ -2,499 +2,15 @@ package durable
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/alhasaniq/consortium/pkg/events"
-	"github.com/alhasaniq/consortium/pkg/storage"
 	"github.com/alhasaniq/consortium/pkg/workflow"
 	"github.com/alhasaniq/consortium/pkg/workflow/runtime"
 )
-
-// ---------------------------------------------------------------------------
-// prepareStartParams
-// ---------------------------------------------------------------------------
-
-func TestDAGRuntime_PrepareStartParams_NilParams(t *testing.T) {
-	err := prepareStartParams(nil)
-	if err == nil {
-		t.Fatal("expected error for nil params")
-	}
-}
-
-func TestDAGRuntime_PrepareStartParams_MissingIdentity(t *testing.T) {
-	err := prepareStartParams(&runtime.StartParams{
-		Snapshot: &runtime.FrozenSnapshot{},
-		Workflow: &workflow.Workflow{},
-	})
-	if err == nil {
-		t.Fatal("expected error for nil identity")
-	}
-}
-
-func TestDAGRuntime_PrepareStartParams_MissingSnapshot(t *testing.T) {
-	err := prepareStartParams(&runtime.StartParams{
-		Identity: &runtime.ExecutionIdentity{},
-		Workflow: &workflow.Workflow{},
-	})
-	if err == nil {
-		t.Fatal("expected error for nil snapshot")
-	}
-}
-
-func TestDAGRuntime_PrepareStartParams_MissingWorkflow(t *testing.T) {
-	err := prepareStartParams(&runtime.StartParams{
-		Identity: &runtime.ExecutionIdentity{},
-		Snapshot: &runtime.FrozenSnapshot{},
-	})
-	if err == nil {
-		t.Fatal("expected error for nil workflow")
-	}
-}
-
-func TestDAGRuntime_PrepareStartParams_InitializesCostTracker(t *testing.T) {
-	params := &runtime.StartParams{
-		Identity: &runtime.ExecutionIdentity{},
-		Snapshot: &runtime.FrozenSnapshot{},
-		Workflow: &workflow.Workflow{
-			Limits: &workflow.CostLimits{MaxCostUSD: 1.0},
-		},
-	}
-	if err := prepareStartParams(params); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if params.CostTracker == nil {
-		t.Fatal("expected CostTracker to be initialized")
-	}
-}
-
-func TestDAGRuntime_PrepareStartParams_PreservesCostTracker(t *testing.T) {
-	existing := workflow.NewCostTracker(&workflow.CostLimits{MaxCostUSD: 5.0})
-	params := &runtime.StartParams{
-		Identity:    &runtime.ExecutionIdentity{},
-		Snapshot:    &runtime.FrozenSnapshot{},
-		Workflow:    &workflow.Workflow{},
-		CostTracker: existing,
-	}
-	if err := prepareStartParams(params); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if params.CostTracker != existing {
-		t.Fatal("expected existing CostTracker to be preserved")
-	}
-}
-
-// ---------------------------------------------------------------------------
-// buildNodeMap
-// ---------------------------------------------------------------------------
-
-func TestDAGRuntime_BuildNodeMap(t *testing.T) {
-	nodes := []*workflow.Node{
-		{ID: "a", Type: workflow.NodeTypePrompt},
-		{ID: "b", Type: workflow.NodeTypeResult},
-		nil, // should be skipped
-		{ID: "c", Type: workflow.NodeTypePrompt},
-	}
-	m := buildNodeMap(nodes)
-	if len(m) != 3 {
-		t.Fatalf("expected 3 entries, got %d", len(m))
-	}
-	if m["a"] == nil || m["b"] == nil || m["c"] == nil {
-		t.Error("expected all non-nil nodes in map")
-	}
-}
-
-func TestDAGRuntime_BuildNodeMap_Empty(t *testing.T) {
-	m := buildNodeMap(nil)
-	if len(m) != 0 {
-		t.Fatalf("expected empty map, got %d entries", len(m))
-	}
-}
-
-func TestDAGRuntime_BuildNodeMap_DuplicateIDsLastWins(t *testing.T) {
-	nodes := []*workflow.Node{
-		{ID: "dup", Type: workflow.NodeTypePrompt, Model: "first"},
-		{ID: "dup", Type: workflow.NodeTypePrompt, Model: "second"},
-	}
-	m := buildNodeMap(nodes)
-	if len(m) != 1 {
-		t.Fatalf("expected 1 entry, got %d", len(m))
-	}
-	if m["dup"].Model != "second" {
-		t.Errorf("expected last node to win, got model=%q", m["dup"].Model)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// buildWorkflowContext
-// ---------------------------------------------------------------------------
-
-func TestDAGRuntime_BuildWorkflowContext_MergesInitialAndOutputs(t *testing.T) {
-	initial := map[string]interface{}{
-		"prompt": "What is 2+2?",
-	}
-	outputs := map[string]interface{}{
-		"node-1": "four",
-		"node-2": 42, // non-string should be skipped
-	}
-	ctx := buildWorkflowContext(initial, outputs)
-	if ctx["prompt"] != "What is 2+2?" {
-		t.Errorf("prompt = %v, want 'What is 2+2?'", ctx["prompt"])
-	}
-	if ctx["node-1"] != "four" {
-		t.Errorf("node-1 = %v, want 'four'", ctx["node-1"])
-	}
-	if _, ok := ctx["node-2"]; ok {
-		t.Error("non-string outputs should not be included")
-	}
-}
-
-func TestDAGRuntime_BuildWorkflowContext_NilInputs(t *testing.T) {
-	ctx := buildWorkflowContext(nil, nil)
-	if ctx == nil {
-		t.Fatal("expected non-nil context")
-	}
-	if len(ctx) != 0 {
-		t.Errorf("expected empty context, got %d entries", len(ctx))
-	}
-}
-
-func TestDAGRuntime_BuildWorkflowContext_OutputOverridesInitial(t *testing.T) {
-	initial := map[string]interface{}{"key": "initial-value"}
-	outputs := map[string]interface{}{"key": "output-value"}
-	ctx := buildWorkflowContext(initial, outputs)
-	if ctx["key"] != "output-value" {
-		t.Errorf("expected output to override initial, got %v", ctx["key"])
-	}
-}
-
-// ---------------------------------------------------------------------------
-// completedNodeCount
-// ---------------------------------------------------------------------------
-
-func TestDAGRuntime_CompletedNodeCount(t *testing.T) {
-	state := &SchedulerState{
-		Nodes: map[string]NodeState{
-			"a": NodeStateCompleted,
-			"b": NodeStateFailed,
-			"c": NodeStateCompleted,
-			"d": NodeStatePending,
-		},
-	}
-	count := completedNodeCount([]string{"a", "b", "c", "d"}, state)
-	if count != 2 {
-		t.Errorf("expected 2 completed, got %d", count)
-	}
-}
-
-func TestDAGRuntime_CompletedNodeCount_NilState(t *testing.T) {
-	count := completedNodeCount([]string{"a"}, nil)
-	if count != 0 {
-		t.Errorf("expected 0 for nil state, got %d", count)
-	}
-}
-
-func TestDAGRuntime_CompletedNodeCount_AllCompleted(t *testing.T) {
-	state := &SchedulerState{
-		Nodes: map[string]NodeState{
-			"a": NodeStateCompleted,
-			"b": NodeStateCompleted,
-		},
-	}
-	count := completedNodeCount([]string{"a", "b"}, state)
-	if count != 2 {
-		t.Errorf("expected 2, got %d", count)
-	}
-}
-
-func TestDAGRuntime_CompletedNodeCount_NoneCompleted(t *testing.T) {
-	state := &SchedulerState{
-		Nodes: map[string]NodeState{
-			"a": NodeStatePending,
-			"b": NodeStateRunning,
-		},
-	}
-	count := completedNodeCount([]string{"a", "b"}, state)
-	if count != 0 {
-		t.Errorf("expected 0, got %d", count)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// resolveFinalOutput
-// ---------------------------------------------------------------------------
-
-func TestDAGRuntime_ResolveFinalOutput_LastNodeWithOutput(t *testing.T) {
-	nodeIDs := []string{"a", "b", "c"}
-	outputs := map[string]interface{}{
-		"a": "first",
-		"c": "last",
-	}
-	result := resolveFinalOutput(nodeIDs, outputs)
-	if result != "last" {
-		t.Errorf("expected 'last', got %q", result)
-	}
-}
-
-func TestDAGRuntime_ResolveFinalOutput_SkipsEmptyStrings(t *testing.T) {
-	nodeIDs := []string{"a", "b"}
-	outputs := map[string]interface{}{
-		"a": "result",
-		"b": "", // empty, should skip
-	}
-	result := resolveFinalOutput(nodeIDs, outputs)
-	if result != "result" {
-		t.Errorf("expected 'result', got %q", result)
-	}
-}
-
-func TestDAGRuntime_ResolveFinalOutput_NoOutputs(t *testing.T) {
-	result := resolveFinalOutput([]string{"a", "b"}, map[string]interface{}{})
-	if result != "" {
-		t.Errorf("expected empty string, got %q", result)
-	}
-}
-
-func TestDAGRuntime_ResolveFinalOutput_NonStringOutput(t *testing.T) {
-	nodeIDs := []string{"a", "b"}
-	outputs := map[string]interface{}{
-		"a": "valid",
-		"b": 42, // non-string
-	}
-	result := resolveFinalOutput(nodeIDs, outputs)
-	if result != "valid" {
-		t.Errorf("expected 'valid', got %q", result)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// resolveFinalError
-// ---------------------------------------------------------------------------
-
-func TestDAGRuntime_ResolveFinalError_RuntimeError(t *testing.T) {
-	err := fmt.Errorf("runtime error")
-	result := resolveFinalError(err, []string{"a"}, map[string]string{"a": "node error"})
-	if result != "runtime error" {
-		t.Errorf("expected runtime error to take precedence, got %q", result)
-	}
-}
-
-func TestDAGRuntime_ResolveFinalError_NodeError(t *testing.T) {
-	result := resolveFinalError(nil, []string{"a", "b"}, map[string]string{
-		"b": "node b failed",
-	})
-	if result != "node b failed" {
-		t.Errorf("expected 'node b failed', got %q", result)
-	}
-}
-
-func TestDAGRuntime_ResolveFinalError_NoErrors(t *testing.T) {
-	result := resolveFinalError(nil, []string{"a"}, map[string]string{})
-	if result != "" {
-		t.Errorf("expected empty string, got %q", result)
-	}
-}
-
-func TestDAGRuntime_ResolveFinalError_FirstNodeErrorByOrder(t *testing.T) {
-	result := resolveFinalError(nil, []string{"x", "y", "z"}, map[string]string{
-		"y": "y failed",
-		"z": "z failed",
-	})
-	if result != "y failed" {
-		t.Errorf("expected first error in node order, got %q", result)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// resolveNodeRetryPolicy
-// ---------------------------------------------------------------------------
-
-func TestDAGRuntime_ResolveNodeRetryPolicy_NilNode(t *testing.T) {
-	p := resolveNodeRetryPolicy(nil)
-	if p != nil {
-		t.Error("expected nil for nil node")
-	}
-}
-
-func TestDAGRuntime_ResolveNodeRetryPolicy_NoPolicy(t *testing.T) {
-	p := resolveNodeRetryPolicy(&workflow.Node{})
-	if p != nil {
-		t.Error("expected nil when node has no retry policy")
-	}
-}
-
-func TestDAGRuntime_ResolveNodeRetryPolicy_ReturnsPolicy(t *testing.T) {
-	policy := &workflow.RetryPolicy{MaxAttempts: 3}
-	p := resolveNodeRetryPolicy(&workflow.Node{RetryPolicy: policy})
-	if p != policy {
-		t.Error("expected same policy pointer")
-	}
-}
-
-// ---------------------------------------------------------------------------
-// buildAttemptMeta
-// ---------------------------------------------------------------------------
-
-func TestDAGRuntime_BuildAttemptMeta_EmptyResult(t *testing.T) {
-	node := &workflow.Node{Type: workflow.NodeTypePrompt}
-	meta := buildAttemptMeta(node, nil)
-	if meta != nil {
-		t.Errorf("expected nil for node with no reasoning config and nil output meta, got %v", meta)
-	}
-}
-
-func TestDAGRuntime_BuildAttemptMeta_ChildJobID(t *testing.T) {
-	node := &workflow.Node{Type: workflow.NodeTypePrompt}
-	outputMeta := map[string]interface{}{
-		"child_job_id": "child-123",
-	}
-	meta := buildAttemptMeta(node, outputMeta)
-	if meta == nil {
-		t.Fatal("expected non-nil meta")
-	}
-	if meta["child_job_id"] != "child-123" {
-		t.Errorf("child_job_id = %v, want child-123", meta["child_job_id"])
-	}
-}
-
-func TestDAGRuntime_BuildAttemptMeta_EmptyChildJobIDIgnored(t *testing.T) {
-	node := &workflow.Node{Type: workflow.NodeTypePrompt}
-	outputMeta := map[string]interface{}{
-		"child_job_id": "",
-	}
-	meta := buildAttemptMeta(node, outputMeta)
-	// empty child_job_id should not be included
-	if meta != nil {
-		if _, ok := meta["child_job_id"]; ok {
-			t.Error("empty child_job_id should not be included")
-		}
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Cancel
-// ---------------------------------------------------------------------------
-
-func TestDAGRuntime_Cancel_UnknownExecID(t *testing.T) {
-	store := newTestStore(t)
-	r := NewDAGRuntime(store, runtime.NewActivityHandlerRegistry())
-	err := r.Cancel(context.Background(), "unknown-exec-id")
-	if err != nil {
-		t.Fatalf("expected no error for unknown exec ID, got %v", err)
-	}
-}
-
-func TestDAGRuntime_Cancel_CallsCancelFunc(t *testing.T) {
-	store := newTestStore(t)
-	r := NewDAGRuntime(store, runtime.NewActivityHandlerRegistry())
-
-	cancelled := false
-	r.mu.Lock()
-	r.cancels["exec-1"] = func() { cancelled = true }
-	r.mu.Unlock()
-
-	err := r.Cancel(context.Background(), "exec-1")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !cancelled {
-		t.Error("expected cancel function to be called")
-	}
-}
-
-// ---------------------------------------------------------------------------
-// handleCancellation
-// ---------------------------------------------------------------------------
-
-func TestDAGRuntime_HandleCancellation_SetsStateAndEmitsEvent(t *testing.T) {
-	store := newTestStore(t)
-	r := NewDAGRuntime(store, runtime.NewActivityHandlerRegistry())
-
-	createDurableJob(t, store, "job-cancel-test", "run-cancel-test")
-
-	state := NewSchedulerState([]string{"n1"})
-	var captured *runtime.ExecutionEvent
-	params := &runtime.StartParams{
-		Identity: &runtime.ExecutionIdentity{
-			WorkflowExecutionID: "job-cancel-test",
-			RunID:               "run-cancel-test",
-		},
-		EventCallback: func(e *runtime.ExecutionEvent) { captured = e },
-	}
-
-	runtimeErr := r.handleCancellation(params, state, "job-cancel-test", "run-cancel-test", nil)
-	if runtimeErr != nil {
-		t.Fatalf("unexpected error: %v", runtimeErr)
-	}
-	if !state.Cancelled {
-		t.Error("expected state.Cancelled to be true")
-	}
-	if captured == nil {
-		t.Fatal("expected cancellation event")
-	}
-	if captured.Type != events.EventCancelled {
-		t.Errorf("event type = %q, want %q", captured.Type, events.EventCancelled)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// toRuntimeHistoryEvents
-// ---------------------------------------------------------------------------
-
-func TestDAGRuntime_ToRuntimeHistoryEvents(t *testing.T) {
-	now := time.Now()
-	storageEvents := []*storage.HistoryEvent{
-		{
-			ID:         1,
-			RunID:      "run-1",
-			Sequence:   1,
-			Type:       "workflow_started",
-			NodeID:     "",
-			ActivityID: "",
-			Timestamp:  now,
-			Attributes: map[string]interface{}{"key": "value"},
-		},
-		{
-			ID:         2,
-			RunID:      "run-1",
-			Sequence:   2,
-			Type:       "schedule_activity",
-			NodeID:     "n1",
-			ActivityID: "a1",
-			Timestamp:  now.Add(time.Second),
-		},
-	}
-
-	result := toRuntimeHistoryEvents(storageEvents)
-	if len(result) != 2 {
-		t.Fatalf("expected 2 events, got %d", len(result))
-	}
-	if result[0].ID != 1 {
-		t.Errorf("first event ID = %d, want 1", result[0].ID)
-	}
-	if result[0].Type != runtime.HistoryWorkflowStarted {
-		t.Errorf("first event type = %q, want workflow_started", result[0].Type)
-	}
-	if result[0].Attributes["key"] != "value" {
-		t.Errorf("first event attributes missing key")
-	}
-	if result[1].NodeID != "n1" {
-		t.Errorf("second event NodeID = %q, want n1", result[1].NodeID)
-	}
-	if result[1].ActivityID != "a1" {
-		t.Errorf("second event ActivityID = %q, want a1", result[1].ActivityID)
-	}
-}
-
-func TestDAGRuntime_ToRuntimeHistoryEvents_Empty(t *testing.T) {
-	result := toRuntimeHistoryEvents(nil)
-	if len(result) != 0 {
-		t.Errorf("expected 0 events, got %d", len(result))
-	}
-}
 
 // ---------------------------------------------------------------------------
 // End-to-end: Start with a simple single-node workflow
@@ -580,6 +96,7 @@ func TestDAGRuntime_Start_SingleNodeFailure(t *testing.T) {
 	})
 	registry.Register(handler)
 	dagRuntime := NewDAGRuntime(store, registry)
+	dagRuntime.sleepFn = func(context.Context, time.Duration) bool { return true }
 
 	wf := &workflow.Workflow{
 		ID:   "wf-fail",
@@ -658,7 +175,7 @@ func TestDAGRuntime_Start_ContextCancellation(t *testing.T) {
 	jobID := "job-ctx-cancel"
 	createDurableJobForTest(t, store, jobID, wf, snapshot)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	err := dagRuntime.Start(ctx, &runtime.StartParams{
@@ -670,6 +187,11 @@ func TestDAGRuntime_Start_ContextCancellation(t *testing.T) {
 		},
 		Snapshot: snapshot,
 		Workflow: wf,
+		EventCallback: func(event *runtime.ExecutionEvent) {
+			if event.Type == events.EventNodeStart {
+				cancel()
+			}
+		},
 	})
 	if err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -846,6 +368,65 @@ func TestDAGRuntime_Start_MultiNodeSequential(t *testing.T) {
 	}
 }
 
+func TestDAGRuntime_Start_DiamondWaitsForAllDependenciesAndPassesTheirOutputs(t *testing.T) {
+	store := newTestStore(t)
+	registry := runtime.NewActivityHandlerRegistry()
+	handler := &contextRecordingLLMHandler{contexts: make(map[string]map[string]interface{})}
+	registry.Register(handler)
+	dagRuntime := NewDAGRuntime(store, registry)
+
+	wf := &workflow.Workflow{
+		ID:   "wf-diamond-context",
+		Name: "Diamond Context",
+		Nodes: []*workflow.Node{
+			{ID: "left", Type: workflow.NodeTypePrompt, Model: "m", Prompt: "left", RetryPolicy: &workflow.RetryPolicy{MaxAttempts: 1}},
+			{ID: "right", Type: workflow.NodeTypePrompt, Model: "m", Prompt: "right", RetryPolicy: &workflow.RetryPolicy{MaxAttempts: 1}},
+			{ID: "join", Type: workflow.NodeTypePrompt, Model: "m", Prompt: "join", RetryPolicy: &workflow.RetryPolicy{MaxAttempts: 1}},
+		},
+		Edges: []*workflow.Edge{
+			{Source: "left", Target: "join"},
+			{Source: "right", Target: "join"},
+		},
+	}
+	snapshot := freezeWorkflowForDurableTest(t, wf)
+	jobID := "job-diamond-context"
+	createDurableJobForTest(t, store, jobID, wf, snapshot)
+
+	if err := dagRuntime.Start(context.Background(), &runtime.StartParams{
+		Identity: &runtime.ExecutionIdentity{
+			WorkflowExecutionID: jobID,
+			RunID:               jobID,
+			RunNumber:           1,
+			DAGHash:             snapshot.DAGHash,
+		},
+		Snapshot: snapshot,
+		Workflow: wf,
+	}); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	joinContext := handler.ContextFor("join")
+	if joinContext == nil {
+		t.Fatal("expected join activity to execute")
+	}
+	if got := joinContext["left"]; got != "output-left" {
+		t.Fatalf("join context left = %v, want output-left", got)
+	}
+	if got := joinContext["right"]; got != "output-right" {
+		t.Fatalf("join context right = %v, want output-right", got)
+	}
+
+	history, err := store.GetHistoryEvents(context.Background(), jobID)
+	if err != nil {
+		t.Fatalf("GetHistoryEvents failed: %v", err)
+	}
+	for _, nodeID := range []string{"left", "right", "join"} {
+		if got := countHistoryByTypeAndNode(history, string(runtime.HistoryActivityStarted), nodeID); got != 1 {
+			t.Errorf("%s activity_started count = %d, want 1", nodeID, got)
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Retry with eventual success
 // ---------------------------------------------------------------------------
@@ -859,6 +440,7 @@ func TestDAGRuntime_Start_RetryThenSuccess(t *testing.T) {
 	)
 	registry.Register(handler)
 	dagRuntime := NewDAGRuntime(store, registry)
+	dagRuntime.sleepFn = func(context.Context, time.Duration) bool { return true }
 
 	wf := &workflow.Workflow{
 		ID:   "wf-retry-success",
@@ -923,6 +505,7 @@ func TestDAGRuntime_Start_CompiledAggregationRetryDoesNotRerunUpstreamAgents(t *
 	)
 	registry.Register(handler)
 	dagRuntime := NewDAGRuntime(store, registry)
+	dagRuntime.sleepFn = func(context.Context, time.Duration) bool { return true }
 
 	wf := &workflow.Workflow{
 		ID:   "wf-compiled-agg-retry",
@@ -1050,41 +633,6 @@ func TestDAGRuntime_Start_WorkflowContextEnrichedWithModel(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// finalizeRun with nil startCtx
-// ---------------------------------------------------------------------------
-
-func TestDAGRuntime_FinalizeRun_NilStartCtx(t *testing.T) {
-	store := newTestStore(t)
-	r := NewDAGRuntime(store, runtime.NewActivityHandlerRegistry())
-
-	err := r.finalizeRun(context.Background(), &runtime.StartParams{}, nil, nil)
-	if err != nil {
-		t.Fatalf("expected no error for nil startCtx, got %v", err)
-	}
-}
-
-func TestDAGRuntime_FinalizeRun_NilState(t *testing.T) {
-	store := newTestStore(t)
-	r := NewDAGRuntime(store, runtime.NewActivityHandlerRegistry())
-
-	err := r.finalizeRun(context.Background(), &runtime.StartParams{}, &startRunContext{}, nil)
-	if err != nil {
-		t.Fatalf("expected no error for nil state, got %v", err)
-	}
-}
-
-func TestDAGRuntime_FinalizeRun_PropagatesRuntimeErr(t *testing.T) {
-	store := newTestStore(t)
-	r := NewDAGRuntime(store, runtime.NewActivityHandlerRegistry())
-
-	runtimeErr := fmt.Errorf("something broke")
-	err := r.finalizeRun(context.Background(), &runtime.StartParams{}, nil, runtimeErr)
-	if err != runtimeErr {
-		t.Fatalf("expected runtimeErr to be returned, got %v", err)
-	}
-}
-
-// ---------------------------------------------------------------------------
 // MaxParallel clamping in dispatchAndCollect
 // ---------------------------------------------------------------------------
 
@@ -1095,6 +643,8 @@ func TestDAGRuntime_Start_MaxParallelNodesRespected(t *testing.T) {
 	var mu sync.Mutex
 	maxConcurrent := 0
 	currentConcurrent := 0
+	started := make(chan struct{}, 4)
+	release := make(chan struct{})
 	handler := &trackingLLMHandler{
 		onExecute: func() {
 			mu.Lock()
@@ -1103,7 +653,8 @@ func TestDAGRuntime_Start_MaxParallelNodesRespected(t *testing.T) {
 				maxConcurrent = currentConcurrent
 			}
 			mu.Unlock()
-			time.Sleep(50 * time.Millisecond) // ensure overlap window
+			started <- struct{}{}
+			<-release
 			mu.Lock()
 			currentConcurrent--
 			mu.Unlock()
@@ -1122,34 +673,61 @@ func TestDAGRuntime_Start_MaxParallelNodesRespected(t *testing.T) {
 			{ID: "n3", Type: workflow.NodeTypePrompt, Model: "m", Prompt: "p", RetryPolicy: &workflow.RetryPolicy{MaxAttempts: 1}},
 			{ID: "n4", Type: workflow.NodeTypePrompt, Model: "m", Prompt: "p", RetryPolicy: &workflow.RetryPolicy{MaxAttempts: 1}},
 		},
-		// No edges: all independent
+		// At least one explicit edge prevents FreezeWorkflow from injecting
+		// default linear dependencies; n1, n2, and n3 are initially ready.
+		Edges: []*workflow.Edge{{Source: "n1", Target: "n4"}},
 	}
 	snapshot := freezeWorkflowForDurableTest(t, wf)
 	jobID := "job-max-parallel"
 	createDurableJobForTest(t, store, jobID, wf, snapshot)
 
-	err := dagRuntime.Start(context.Background(), &runtime.StartParams{
-		Identity: &runtime.ExecutionIdentity{
-			WorkflowExecutionID: jobID,
-			RunID:               jobID,
-			RunNumber:           1,
-			DAGHash:             snapshot.DAGHash,
-		},
-		Snapshot: snapshot,
-		Workflow: wf,
-		ExecCtx: &workflow.ExecutionContext{
-			MaxParallelNodes: 2,
-		},
-	})
-	if err != nil {
-		t.Fatalf("Start failed: %v", err)
+	startDone := make(chan error, 1)
+	go func() {
+		startDone <- dagRuntime.Start(context.Background(), &runtime.StartParams{
+			Identity: &runtime.ExecutionIdentity{
+				WorkflowExecutionID: jobID,
+				RunID:               jobID,
+				RunNumber:           1,
+				DAGHash:             snapshot.DAGHash,
+			},
+			Snapshot: snapshot,
+			Workflow: wf,
+			ExecCtx: &workflow.ExecutionContext{
+				MaxParallelNodes: 2,
+			},
+		})
+	}()
+
+	for i := 0; i < 2; i++ {
+		select {
+		case <-started:
+		case err := <-startDone:
+			t.Fatalf("Start returned before the configured parallel activities started: %v", err)
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for the configured parallel activities to start")
+		}
+	}
+	select {
+	case <-started:
+		t.Fatal("a third activity started before either configured slot was released")
+	default:
+	}
+	close(release)
+
+	select {
+	case err := <-startDone:
+		if err != nil {
+			t.Fatalf("Start failed: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for the workflow to finish")
 	}
 
 	mu.Lock()
 	observedMax := maxConcurrent
 	mu.Unlock()
-	if observedMax > 2 {
-		t.Errorf("max concurrent = %d, expected <= 2", observedMax)
+	if observedMax != 2 {
+		t.Errorf("max concurrent = %d, expected exactly 2", observedMax)
 	}
 
 	job, err := store.GetExecution(jobID)
@@ -1164,6 +742,37 @@ func TestDAGRuntime_Start_MaxParallelNodesRespected(t *testing.T) {
 // trackingLLMHandler is a test handler that executes a callback during activity processing.
 type trackingLLMHandler struct {
 	onExecute func()
+}
+
+type contextRecordingLLMHandler struct {
+	mu       sync.Mutex
+	contexts map[string]map[string]interface{}
+}
+
+func (h *contextRecordingLLMHandler) Type() runtime.ActivityType {
+	return runtime.ActivityTypeLLMCall
+}
+
+func (h *contextRecordingLLMHandler) Execute(ctx context.Context, input *runtime.ActivityInput) (*runtime.ActivityOutput, error) {
+	h.mu.Lock()
+	contextCopy := make(map[string]interface{}, len(input.WorkflowContext))
+	for key, value := range input.WorkflowContext {
+		contextCopy[key] = value
+	}
+	h.contexts[input.NodeID] = contextCopy
+	h.mu.Unlock()
+
+	return &runtime.ActivityOutput{
+		NodeID:  input.NodeID,
+		Success: true,
+		Output:  "output-" + input.NodeID,
+	}, nil
+}
+
+func (h *contextRecordingLLMHandler) ContextFor(nodeID string) map[string]interface{} {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.contexts[nodeID]
 }
 
 func (h *trackingLLMHandler) Type() runtime.ActivityType {

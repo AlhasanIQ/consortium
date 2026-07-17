@@ -421,6 +421,9 @@ func TestEmit_AppendHistory(t *testing.T) {
 	if events[0].Type != "workflow_started" {
 		t.Errorf("event type = %q, want workflow_started", events[0].Type)
 	}
+	if events[0].Attributes["foo"] != "bar" {
+		t.Errorf("event attributes foo = %v, want bar", events[0].Attributes["foo"])
+	}
 }
 
 func TestEmit_AppendHistoryBatch(t *testing.T) {
@@ -445,6 +448,15 @@ func TestEmit_AppendHistoryBatch(t *testing.T) {
 	}
 	if len(events) != 2 {
 		t.Fatalf("expected 2 events, got %d", len(events))
+	}
+	if events[0].Sequence != 1 || events[1].Sequence != 2 {
+		t.Fatalf("expected contiguous batch sequences 1,2; got %d,%d", events[0].Sequence, events[1].Sequence)
+	}
+	if events[0].Type != "schedule_activity" || events[1].Type != "activity_started" {
+		t.Fatalf("unexpected persisted batch order: %s then %s", events[0].Type, events[1].Type)
+	}
+	if events[0].NodeID != "n1" || events[0].ActivityID != "a1" || events[1].NodeID != "n1" || events[1].ActivityID != "a1" {
+		t.Fatalf("batch lost activity identity: first=%+v second=%+v", events[0], events[1])
 	}
 }
 

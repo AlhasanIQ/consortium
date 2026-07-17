@@ -158,6 +158,43 @@ func TestShouldRetry_NilRetryableErrorsUsesDefaultList(t *testing.T) {
 	}
 }
 
+func TestRetryPolicyCloneDeepCopiesMutableConfiguration(t *testing.T) {
+	original := &RetryPolicy{
+		MaxAttempts:     4,
+		RetryableErrors: []string{"TIMEOUT"},
+		AdaptiveReasoning: &AdaptiveReasoningPolicy{
+			TriggerErrorCodes:        []string{RetryCodeTimeout},
+			ActivateAfterConsecutive: 2,
+			Ladder:                   []string{"high", "none"},
+		},
+	}
+
+	clone := original.Clone()
+	if clone == nil {
+		t.Fatal("Clone returned nil for a non-nil policy")
+	}
+	clone.RetryableErrors[0] = "CONNECTION"
+	clone.AdaptiveReasoning.TriggerErrorCodes[0] = RetryCodeAggParseFailure
+	clone.AdaptiveReasoning.Ladder[0] = "low"
+
+	if original.RetryableErrors[0] != "TIMEOUT" {
+		t.Fatalf("RetryableErrors alias changed original: %+v", original.RetryableErrors)
+	}
+	if original.AdaptiveReasoning.TriggerErrorCodes[0] != RetryCodeTimeout {
+		t.Fatalf("TriggerErrorCodes alias changed original: %+v", original.AdaptiveReasoning.TriggerErrorCodes)
+	}
+	if original.AdaptiveReasoning.Ladder[0] != "high" {
+		t.Fatalf("Ladder alias changed original: %+v", original.AdaptiveReasoning.Ladder)
+	}
+}
+
+func TestRetryPolicyClonePreservesNilReceiver(t *testing.T) {
+	var policy *RetryPolicy
+	if clone := policy.Clone(); clone != nil {
+		t.Fatalf("nil policy Clone() = %+v, want nil", clone)
+	}
+}
+
 func TestGetBackoffDuration(t *testing.T) {
 	policy := &RetryPolicy{
 		BackoffMs:       1000,

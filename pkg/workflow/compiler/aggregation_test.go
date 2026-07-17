@@ -235,7 +235,15 @@ func TestCompileAggregationReferencePreservesExecutionPolicy(t *testing.T) {
 	})
 	agg := findNode(parent, "agg")
 	agg.TimeoutSeconds = 123
-	agg.RetryPolicy = &workflow.RetryPolicy{MaxAttempts: 1}
+	agg.RetryPolicy = &workflow.RetryPolicy{
+		MaxAttempts:     1,
+		RetryableErrors: []string{"CUSTOM_TRANSIENT"},
+		AdaptiveReasoning: &workflow.AdaptiveReasoningPolicy{
+			TriggerErrorCodes:        []string{workflow.RetryCodeTimeout},
+			ActivateAfterConsecutive: 2,
+			Ladder:                   []string{"high", "none"},
+		},
+	}
 
 	compiled, _, err := Compile(context.Background(), parent, StaticResolver{
 		"aggregation-judge": testAggregationSourceWorkflow("aggregation-judge"),
@@ -255,6 +263,17 @@ func TestCompileAggregationReferencePreservesExecutionPolicy(t *testing.T) {
 		if node.RetryPolicy == nil || node.RetryPolicy.MaxAttempts != 1 {
 			t.Fatalf("%s RetryPolicy = %+v, want max_attempts=1", id, node.RetryPolicy)
 		}
+		if len(node.RetryPolicy.RetryableErrors) != 1 || node.RetryPolicy.RetryableErrors[0] != "CUSTOM_TRANSIENT" {
+			t.Fatalf("%s RetryableErrors = %+v, want custom policy", id, node.RetryPolicy.RetryableErrors)
+		}
+		if node.RetryPolicy.AdaptiveReasoning == nil || node.RetryPolicy.AdaptiveReasoning.Ladder[0] != "high" {
+			t.Fatalf("%s AdaptiveReasoning = %+v, want cloned policy", id, node.RetryPolicy.AdaptiveReasoning)
+		}
+	}
+	compiledJudge := findNode(compiled, "agg--judge")
+	compiledJudge.RetryPolicy.RetryableErrors[0] = "MUTATED"
+	if agg.RetryPolicy.RetryableErrors[0] != "CUSTOM_TRANSIENT" {
+		t.Fatalf("compiled retry policy mutation changed source aggregation node: %+v", agg.RetryPolicy)
 	}
 
 	repair := findNode(compiled, "agg--repair-selection")
@@ -276,6 +295,36 @@ func TestCompileAggregationReferencePreservesExecutionPolicy(t *testing.T) {
 		if node.RetryPolicy == nil || node.RetryPolicy.MaxAttempts != 1 {
 			t.Fatalf("%s RetryPolicy = %+v, want max_attempts=1", id, node.RetryPolicy)
 		}
+	}
+}
+
+func TestCompileAggregationReferenceRejectsMissingCandidates(t *testing.T) {
+	parent := &workflow.Workflow{
+		ID: "parent",
+		Nodes: []*workflow.Node{{
+			ID:                "agg",
+			Type:              workflow.NodeTypeWorkflowRef,
+			WorkflowRefID:     "aggregation-collect",
+			AggregationMethod: workflow.AggMethodCollect,
+		}},
+	}
+
+	_, _, err := Compile(context.Background(), parent, StaticResolver{
+		"aggregation-collect": testAggregationSourceWorkflow("aggregation-collect"),
+	})
+	if err == nil || !strings.Contains(err.Error(), "requires at least one upstream candidate") {
+		t.Fatalf("Compile error = %v, want missing-candidate contract error", err)
+	}
+}
+
+func TestCompileAggregationReferenceRejectsUnknownMethod(t *testing.T) {
+	parent := testAggregationParent(workflow.AggregationMethod("unsupported"), "custom-aggregation", nil)
+
+	_, _, err := Compile(context.Background(), parent, StaticResolver{
+		"custom-aggregation": testAggregationSourceWorkflow("custom-aggregation"),
+	})
+	if err == nil || !strings.Contains(err.Error(), "unknown aggregation method") {
+		t.Fatalf("Compile error = %v, want unknown aggregation method", err)
 	}
 }
 

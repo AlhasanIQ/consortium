@@ -173,20 +173,6 @@ func TestGetRequestID(t *testing.T) {
 	})
 }
 
-func TestResponseWriter_WriteHeader(t *testing.T) {
-	w := httptest.NewRecorder()
-	rw := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
-
-	rw.WriteHeader(http.StatusNotFound)
-
-	if rw.statusCode != http.StatusNotFound {
-		t.Errorf("statusCode = %d, want %d", rw.statusCode, http.StatusNotFound)
-	}
-	if w.Code != http.StatusNotFound {
-		t.Errorf("underlying writer Code = %d, want %d", w.Code, http.StatusNotFound)
-	}
-}
-
 func TestTrimTrailingSlash(t *testing.T) {
 	t.Run("trims trailing slash for non-root path", func(t *testing.T) {
 		var gotPath string

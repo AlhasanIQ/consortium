@@ -240,10 +240,10 @@ CREATE INDEX IF NOT EXISTS idx_jobs_root_status
 CREATE INDEX IF NOT EXISTS idx_jobs_child_status
     ON jobs(status)
     WHERE parent_execution_id IS NOT NULL AND parent_execution_id != '';
-CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_idempotency_key ON jobs(idempotency_key) WHERE idempotency_key IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_idempotency_key ON jobs(COALESCE(user_id, ''), idempotency_key) WHERE idempotency_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_jobs_request_hash ON jobs(request_hash, created_at DESC) WHERE request_hash IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_jobs_config_hash ON jobs(config_hash) WHERE config_hash IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_jobs_user_idempotency ON jobs(user_id, idempotency_key) WHERE idempotency_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_jobs_user_idempotency ON jobs(COALESCE(user_id, ''), idempotency_key) WHERE idempotency_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_jobs_user_request_hash ON jobs(user_id, request_hash, created_at DESC) WHERE request_hash IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_jobs_dag_hash ON jobs(dag_hash) WHERE dag_hash IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_jobs_workflow_execution_id ON jobs(workflow_execution_id) WHERE workflow_execution_id IS NOT NULL;

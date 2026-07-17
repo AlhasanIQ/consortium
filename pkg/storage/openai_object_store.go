@@ -317,7 +317,12 @@ func (s *Storage) CompleteOpenAIObjectWithItemsUsageAndIdempotencyByJob(
 		if err := replaceOpenAIObjectItemsTx(tx, id, keyID, items); err != nil {
 			return err
 		}
-		if err := updateAPIUsageCompletionByJob(tx, keyID, usageEndpoint, jobID, usageUpdate); err != nil {
+		// A durable job can outlive or predate its API usage row (for example after
+		// an interrupted write or a migration from an older release). Reconciliation
+		// must still atomically finalize the public object, items, and idempotency
+		// response. Only a missing usage row is optional; all other failures roll
+		// back the transaction.
+		if err := updateAPIUsageCompletionByJob(tx, keyID, usageEndpoint, jobID, usageUpdate); err != nil && !errors.Is(err, ErrNotFound) {
 			return err
 		}
 		if err := completeAPIIdempotencyByJob(tx, keyID, jobID, idempotencyResponseBody, idempotencyHTTPStatus); err != nil && !errors.Is(err, ErrNotFound) {

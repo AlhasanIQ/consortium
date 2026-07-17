@@ -37,6 +37,13 @@ func TestAPIKeysCreateListLookupTouchAndRevoke(t *testing.T) {
 	if got.Name != "CI key" || got.RequestsPerMinute != 12 || got.TokensPerMinute != 3456 {
 		t.Fatalf("unexpected key fields: %+v", got)
 	}
+	got, err = store.GetAPIKeyByHash("sha256:testhash")
+	if err != nil {
+		t.Fatalf("GetAPIKeyByHash: %v", err)
+	}
+	if got.ID != "key_test_1" {
+		t.Fatalf("GetAPIKeyByHash returned %+v, want key_test_1", got)
+	}
 
 	keys, err := store.ListAPIKeys("system", false)
 	if err != nil {
@@ -253,6 +260,59 @@ func TestAPIUsageCreateUpdateListAndSummary(t *testing.T) {
 	}
 	if summary.Requests != 1 || summary.TokensTotal != 18 || summary.Cost != 0.0123 {
 		t.Fatalf("summary = %+v, want one request and totals", summary)
+	}
+}
+
+func TestAPIUsageCompletionByJobUpdatesAttachedUsage(t *testing.T) {
+	store, err := NewStorage(":memory:")
+	if err != nil {
+		t.Fatalf("NewStorage: %v", err)
+	}
+	defer store.Close()
+
+	createdAt := time.Date(2026, 6, 24, 11, 0, 0, 0, time.UTC)
+	if err := store.CreateAPIUsage(&APIUsageRecord{
+		ID:        "usage-by-job",
+		RequestID: "req-by-job",
+		KeyID:     "key-by-job",
+		UserID:    "system",
+		Endpoint:  "/v1/responses",
+		Status:    APIUsageStatusRunning,
+		CreatedAt: createdAt,
+	}); err != nil {
+		t.Fatalf("CreateAPIUsage: %v", err)
+	}
+	if err := store.AttachAPIUsageJob("usage-by-job", "job-by-job"); err != nil {
+		t.Fatalf("AttachAPIUsageJob: %v", err)
+	}
+
+	completedAt := createdAt.Add(time.Second)
+	if err := store.UpdateAPIUsageCompletionByJob("key-by-job", "/v1/responses", "job-by-job", APIUsageCompletion{
+		Status:       APIUsageStatusFailed,
+		HTTPStatus:   502,
+		TokensInput:  4,
+		TokensOutput: 2,
+		TokensTotal:  6,
+		ErrorCode:    "UPSTREAM_ERROR",
+		ErrorMessage: "provider unavailable",
+		CompletedAt:  completedAt,
+	}); err != nil {
+		t.Fatalf("UpdateAPIUsageCompletionByJob: %v", err)
+	}
+
+	rows, err := store.ListAPIUsage(APIUsageFilters{KeyID: "key-by-job", Limit: 1})
+	if err != nil {
+		t.Fatalf("ListAPIUsage: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("ListAPIUsage len = %d, want 1", len(rows))
+	}
+	got := rows[0]
+	if got.JobID != "job-by-job" || got.Status != APIUsageStatusFailed || got.HTTPStatus != 502 {
+		t.Fatalf("usage row = %+v, want attached failed completion", got)
+	}
+	if got.ErrorCode != "UPSTREAM_ERROR" || got.ErrorMessage != "provider unavailable" || got.TokensTotal != 6 {
+		t.Fatalf("usage failure details = %+v", got)
 	}
 }
 

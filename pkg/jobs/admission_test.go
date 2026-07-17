@@ -3,7 +3,6 @@ package jobs
 import (
 	"context"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -26,7 +25,7 @@ func newTestManager(t *testing.T, maxConcurrent int) *Manager {
 	})
 }
 
-func TestAcquireSlot_BlocksAtCapacity(t *testing.T) {
+func TestAcquireSlot_ReturnsPoolExhaustedAtCapacity(t *testing.T) {
 	m := newTestManager(t, 2)
 	ctx := context.Background()
 
@@ -38,20 +37,16 @@ func TestAcquireSlot_BlocksAtCapacity(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Third acquire should timeout
-	start := time.Now()
+	// Third acquire should fail without taking a slot.
 	err := m.AcquireSlot(ctx)
-	elapsed := time.Since(start)
-
-	if err == nil {
-		t.Fatal("expected pool exhaustion error")
-	}
 	if !IsAdmissionError(err) {
 		t.Fatalf("expected admission error, got: %v", err)
 	}
-	if elapsed < 900*time.Millisecond {
-		t.Fatalf("expected to wait about 1s, waited %v", elapsed)
+	if active, capacity := m.PoolStats(); active != 2 || capacity != 2 {
+		t.Fatalf("exhausted acquire changed pool state: active=%d capacity=%d", active, capacity)
 	}
+	m.ReleaseSlot()
+	m.ReleaseSlot()
 }
 
 func TestReleaseSlot_UnblocksWaiter(t *testing.T) {
@@ -63,9 +58,12 @@ func TestReleaseSlot_UnblocksWaiter(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Start a waiter in background
+	// Start a waiter in background. The readiness signal is sent before the
+	// acquire, so the test never needs a sleep to arrange the blocked state.
+	started := make(chan struct{})
 	acquired := make(chan struct{})
 	go func() {
+		close(started)
 		if err := m.AcquireSlot(ctx); err != nil {
 			t.Errorf("waiter got error: %v", err)
 			return
@@ -73,14 +71,13 @@ func TestReleaseSlot_UnblocksWaiter(t *testing.T) {
 		close(acquired)
 	}()
 
-	// Small delay then release
-	time.Sleep(50 * time.Millisecond)
+	<-started
 	m.ReleaseSlot()
 
 	select {
 	case <-acquired:
 		// OK — waiter got the slot
-	case <-time.After(3 * time.Second):
+	case <-time.After(time.Second):
 		t.Fatal("waiter did not acquire slot after release")
 	}
 
@@ -97,23 +94,88 @@ func TestAcquireSlot_ContextCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Cancel ctx while waiting
+	// Cancel ctx while waiting. The readiness signal removes the need for a
+	// timing-based delay before cancellation.
 	cancelCtx, cancel := context.WithCancel(ctx)
+	started := make(chan struct{})
+	errCh := make(chan error, 1)
 	go func() {
-		time.Sleep(50 * time.Millisecond)
-		cancel()
+		close(started)
+		errCh <- m.AcquireSlot(cancelCtx)
 	}()
+	<-started
+	cancel()
 
-	err := m.AcquireSlot(cancelCtx)
-	if err == nil {
-		t.Fatal("expected context cancellation error")
-	}
-	if err != context.Canceled {
-		t.Fatalf("expected context.Canceled, got: %v", err)
+	select {
+	case err := <-errCh:
+		if err != context.Canceled {
+			t.Fatalf("expected context.Canceled, got: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cancelled waiter did not return")
 	}
 
 	// Clean up
 	m.ReleaseSlot()
+}
+
+func TestClassifyAdmissionPauseReason(t *testing.T) {
+	tests := []struct {
+		name        string
+		code        string
+		message     string
+		wantPause   bool
+		wantCode    string
+		wantReason  string
+		wantMessage string
+	}{
+		{
+			name:        "explicit auth code",
+			code:        " auth_error ",
+			wantPause:   true,
+			wantCode:    "AUTH_ERROR",
+			wantReason:  "auth_or_access_denied",
+			wantMessage: "Provider authentication/access denied; admission paused",
+		},
+		{
+			name:        "message infers credits",
+			message:     "provider reports quota exhausted",
+			wantPause:   true,
+			wantCode:    "INSUFFICIENT_CREDITS",
+			wantReason:  "insufficient_credits",
+			wantMessage: "provider reports quota exhausted",
+		},
+		{
+			name:        "message infers auth while preserving supplied code",
+			code:        "UPSTREAM_FAILURE",
+			message:     "request forbidden by provider",
+			wantPause:   true,
+			wantCode:    "UPSTREAM_FAILURE",
+			wantReason:  "auth_or_access_denied",
+			wantMessage: "request forbidden by provider",
+		},
+		{
+			name:      "ordinary transient failure does not pause",
+			code:      "5xx",
+			message:   "temporary upstream failure",
+			wantPause: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, paused := ClassifyAdmissionPauseReason(tt.code, tt.message)
+			if paused != tt.wantPause {
+				t.Fatalf("paused = %v, want %v (reason=%+v)", paused, tt.wantPause, got)
+			}
+			if !tt.wantPause {
+				return
+			}
+			if got.Code != tt.wantCode || got.Reason != tt.wantReason || got.Message != tt.wantMessage {
+				t.Fatalf("reason = %+v, want code=%q reason=%q message=%q", got, tt.wantCode, tt.wantReason, tt.wantMessage)
+			}
+		})
+	}
 }
 
 func TestPoolStats(t *testing.T) {
@@ -155,30 +217,62 @@ func TestPoolConcurrentAccess(t *testing.T) {
 	ctx := context.Background()
 
 	var wg sync.WaitGroup
-	var acquired int64
+	var mu sync.Mutex
+	current := 0
+	maxCurrent := 0
+	acquired := make(chan struct{}, 20)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	defer releaseOnce.Do(func() { close(release) })
 
-	// Launch 20 goroutines competing for 5 slots
+	// Hold every acquired slot until all five capacity holders have arrived.
+	// This proves the cap without a sleep and then releases all waiters in one
+	// controlled transition.
 	for i := 0; i < 20; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := m.AcquireSlot(ctx); err == nil {
-				atomic.AddInt64(&acquired, 1)
-				time.Sleep(10 * time.Millisecond) // simulate work
-				m.ReleaseSlot()
+			if err := m.AcquireSlot(ctx); err != nil {
+				t.Errorf("AcquireSlot failed: %v", err)
+				return
 			}
+			mu.Lock()
+			current++
+			if current > maxCurrent {
+				maxCurrent = current
+			}
+			mu.Unlock()
+			acquired <- struct{}{}
+			<-release
+			mu.Lock()
+			current--
+			mu.Unlock()
+			m.ReleaseSlot()
 		}()
 	}
 
+	for i := 0; i < 5; i++ {
+		select {
+		case <-acquired:
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for capacity holder %d", i+1)
+		}
+	}
+	if active, capacity := m.PoolStats(); active != 5 || capacity != 5 {
+		t.Fatalf("expected all capacity slots to be occupied, active=%d capacity=%d", active, capacity)
+	}
+	releaseOnce.Do(func() { close(release) })
 	wg.Wait()
 
-	// All 20 should have eventually acquired and released
-	if acquired != 20 {
-		t.Fatalf("expected 20 acquisitions, got %d", acquired)
+	mu.Lock()
+	defer mu.Unlock()
+	if maxCurrent != 5 {
+		t.Fatalf("expected max concurrent holders 5, got %d", maxCurrent)
 	}
-
-	active, _ := m.PoolStats()
-	if active != 0 {
+	if current != 0 {
+		t.Fatalf("expected 0 holders after all released, got %d", current)
+	}
+	if active, _ := m.PoolStats(); active != 0 {
 		t.Fatalf("expected 0 active after all released, got %d", active)
 	}
 }

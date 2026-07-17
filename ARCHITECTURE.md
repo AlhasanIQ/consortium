@@ -294,7 +294,7 @@ Append-only event log for WebSocket stream resilience. Each event gets a per-job
 
 #### `side_effect_outbox`
 
-Outbox pattern for durable side effects (tool calls, webhooks). Ensures at-least-once delivery with configurable retry (`max_attempts`, `next_attempt_at`). Status: pending → processing → completed/failed.
+Reserved storage schema for a future durable side-effect dispatcher. The table models retry state (`max_attempts`, `next_attempt_at`), but v0.1 does not run an outbox delivery worker and therefore does not promise at-least-once webhook or tool-call delivery through this table.
 
 ---
 
@@ -314,7 +314,7 @@ Append-only history events with per-run monotonic sequence. The durable runtime 
 
 #### `activity_results`
 
-Idempotent activity outcome cache. Keyed by `idempotency_key` (`{execution_id}:{node_id}:{attempt}`). On replay, the runtime checks this table first — if a result exists, it skips re-execution. Prevents duplicate LLM calls.
+Activity outcome cache keyed by `idempotency_key` (`{execution_id}:{node_id}:{attempt}`). On replay, the runtime checks this table first and skips execution when a terminal result already exists. This protects ordinary sequential replay; it is not an exactly-once side-effect guarantee and does not fence two concurrently active schedulers.
 
 ---
 

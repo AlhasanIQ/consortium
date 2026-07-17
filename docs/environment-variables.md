@@ -77,7 +77,7 @@ Novomo docs live in the Novomo project: https://github.com/alhasaniq/novomo and 
 
 | Variable | Description |
 | --- | --- |
-| `ARTIFICIAL_ANALYSIS_API_KEY` | Used by `conctl benchmarks models sync` for model metadata. |
+| `ARTIFICIAL_ANALYSIS_API_KEY` | Required by `conctl benchmarks models sync` for Artificial Analysis V2 model metadata. |
 | `WORKTREE_PROFILE` | Local worktree profile name used by helper scripts. |
 
 ## Tracing Retention

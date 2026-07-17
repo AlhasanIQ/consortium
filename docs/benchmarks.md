@@ -200,8 +200,8 @@ Use the benchmark model guidance tool to inspect Artificial Analysis intelligenc
 
 Notes:
 - Default output format is markdown; use `--format json` when machine parsing is needed.
-- Snapshot files are written under `benchmarks/models_repo/` (`models_flat.json`, plus `source_raw.json` for raw source payloads).
-- `ARTIFICIAL_ANALYSIS_API_KEY` is optional for sync; free endpoint access may still work without it depending on AA API policy.
+- Snapshot files are written under `benchmarks/models_repo/` (`models_flat.json`, plus `source_raw.json`, which preserves every V2 response page).
+- `ARTIFICIAL_ANALYSIS_API_KEY` is required for sync. The default is the Artificial Analysis V2 Free endpoint, which returns model-level data and is paginated. It does not provide host-specific data, reasoning/deprecation flags, blended pricing, token-count breakdowns, context windows, or end-to-end P95 latency; unavailable Boolean flags are explicitly marked with their `*_known=false` companion fields, and unavailable numeric/string fields are omitted. A Pro key may use `--source-url https://artificialanalysis.ai/api/v2/language/models?prompt_type=medium` to populate the documented Pro fields.
 
 ## Experimental Benchloop
 

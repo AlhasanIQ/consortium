@@ -1,195 +1,166 @@
 package conctl
 
 import (
+	"encoding/json"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/alhasaniq/consortium/pkg/providers"
 )
 
-func TestBuildBenchmarkModelsRepo_PrefersComputedPerformanceHostModel(t *testing.T) {
-	rowA := map[string]interface{}{
-		"id":                      "host-a",
-		"slug":                    "provider-a_model-x",
-		"host_id":                 "provider-a",
-		"price_1m_input_tokens":   2.0,
-		"price_1m_output_tokens":  8.0,
-		"price_1m_blended_3_to_1": 3.5,
-		"host": map[string]interface{}{
-			"short_name": "Provider A",
-		},
-		"model": map[string]interface{}{
-			"id":                                 "model-x",
-			"slug":                               "model-x",
-			"name":                               "Model X",
-			"short_name":                         "Model X",
-			"reasoning_model":                    true,
-			"deprecated":                         false,
-			"intelligence_index":                 20.0,
-			"computed_performance_host_model_id": "host-b",
-			"intelligence_index_token_counts": map[string]interface{}{
-				"input_tokens":  1000000.0,
-				"output_tokens": 1000000.0,
-			},
-		},
-	}
-	rowB := map[string]interface{}{
-		"id":                      "host-b",
-		"slug":                    "provider-b_model-x",
-		"host_id":                 "provider-b",
-		"price_1m_input_tokens":   5.0,
-		"price_1m_output_tokens":  5.0,
-		"price_1m_blended_3_to_1": 5.0,
-		"host": map[string]interface{}{
-			"short_name": "Provider B",
-		},
-		"model": map[string]interface{}{
-			"id":                                 "model-x",
-			"slug":                               "model-x",
-			"name":                               "Model X",
-			"short_name":                         "Model X",
-			"reasoning_model":                    true,
-			"deprecated":                         false,
-			"intelligence_index":                 20.0,
-			"computed_performance_host_model_id": "host-b",
-			"intelligence_index_token_counts": map[string]interface{}{
-				"input_tokens":  1000000.0,
-				"output_tokens": 1000000.0,
-			},
-		},
-	}
-
-	repo := buildBenchmarkModelsRepo([]map[string]interface{}{rowA, rowB}, "source-url", "2026-02-16T00:00:00Z")
+func TestBuildBenchmarkModelsRepo_DeduplicatesV2ModelRows(t *testing.T) {
+	first := v2ModelRow("model-x", "Model X", 20, 5)
+	second := v2ModelRow("model-x", "Model X (updated)", 21, 6)
+	repo := buildBenchmarkModelsRepo([]map[string]interface{}{first, second}, "source-url", "2026-02-16T00:00:00Z")
 	if got, want := repo.UniqueModels, 1; got != want {
 		t.Fatalf("UniqueModels = %d, want %d", got, want)
 	}
-	if got, want := repo.Models[0].SourceHostModelID, "host-b"; got != want {
-		t.Fatalf("selected SourceHostModelID = %q, want %q", got, want)
+	if got, want := repo.Models[0].Name, "Model X (updated)"; got != want {
+		t.Fatalf("deduplicated model = %q, want %q", got, want)
 	}
 }
 
-func TestBuildBenchmarkModelsRepo_FallbackPrefersMedian(t *testing.T) {
-	makeRow := func(id, hostID string, blended float64) map[string]interface{} {
-		return map[string]interface{}{
-			"id":                      id,
-			"slug":                    hostID + "_model-y",
-			"host_id":                 hostID,
-			"price_1m_input_tokens":   blended * 0.5,
-			"price_1m_output_tokens":  blended * 2.0,
-			"price_1m_blended_3_to_1": blended,
-			"host": map[string]interface{}{
-				"short_name": hostID,
-			},
-			"model": map[string]interface{}{
-				"id":                 "model-y",
-				"slug":               "model-y",
-				"name":               "Model Y",
-				"short_name":         "Model Y",
-				"reasoning_model":    false,
-				"deprecated":         false,
-				"intelligence_index": 15.0,
-				"intelligence_index_token_counts": map[string]interface{}{
-					"input_tokens":  2000000.0,
-					"output_tokens": 1000000.0,
-				},
-			},
-		}
-	}
-
-	// 3 hosts: cheap (0.10), medium (1.00), expensive (5.00) — median should be medium
-	rows := []map[string]interface{}{
-		makeRow("host-expensive", "provider-expensive", 5.0),
-		makeRow("host-cheap", "provider-cheap", 0.10),
-		makeRow("host-medium", "provider-medium", 1.0),
-	}
-	repo := buildBenchmarkModelsRepo(rows, "source-url", "2026-02-16T00:00:00Z")
-	if got, want := repo.Models[0].SourceHostModelID, "host-medium"; got != want {
-		t.Fatalf("selected SourceHostModelID = %q, want %q", got, want)
-	}
-}
-
-func TestBenchmarkModelRecordFromRow_DerivesCostAndValue(t *testing.T) {
-	row := map[string]interface{}{
-		"id":                      "host-z",
-		"slug":                    "provider-z_model-z",
-		"host_id":                 "provider-z",
-		"price_1m_input_tokens":   2.0,
-		"price_1m_output_tokens":  4.0,
-		"price_1m_blended_3_to_1": 2.5,
-		"host": map[string]interface{}{
-			"short_name": "Provider Z",
-		},
-		"model": map[string]interface{}{
-			"id":                 "model-z",
-			"slug":               "model-z",
-			"name":               "Model Z",
-			"short_name":         "Model Z",
-			"reasoning_model":    true,
-			"deprecated":         false,
-			"intelligence_index": 40.0,
-			"intelligence_index_token_counts": map[string]interface{}{
-				"input_tokens":     3000000.0,
-				"output_tokens":    2000000.0,
-				"answer_tokens":    1000000.0,
-				"reasoning_tokens": 1000000.0,
-			},
-		},
-	}
-
-	record, ok := benchmarkModelRecordFromRow(row, "2026-02-16T00:00:00Z")
+func TestBenchmarkModelRecordFromV2Row_MapsEveryAvailableField(t *testing.T) {
+	row := v2ModelRow("model-z", "Model Z", 40, 14)
+	record, ok := benchmarkModelRecordFromV2Row(row, "2026-02-16T00:00:00Z")
 	if !ok {
-		t.Fatal("expected record to parse")
+		t.Fatal("expected V2 record to parse")
 	}
-	if record.CostToRunIndexInputUSD == nil || record.CostToRunIndexOutputUSD == nil || record.CostToRunIndexTotalUSD == nil || record.ValueScore == nil {
-		t.Fatal("expected derived cost/value fields to be present")
+	if record.CostToRunIndexTotalUSD == nil || record.ValueScore == nil {
+		t.Fatal("expected V2 total cost and value score")
 	}
-
-	assertAlmostEqual(t, "input_cost", *record.CostToRunIndexInputUSD, 6.0)
-	assertAlmostEqual(t, "output_cost", *record.CostToRunIndexOutputUSD, 8.0)
-	assertAlmostEqual(t, "total_cost", *record.CostToRunIndexTotalUSD, 14.0)
+	assertAlmostEqual(t, "total_cost", *record.CostToRunIndexTotalUSD, 14)
 	assertAlmostEqual(t, "value_score", *record.ValueScore, 40.0/14.0)
+	assertAlmostEqual(t, "input_price", *record.Price1MInputTokens, 2)
+	assertAlmostEqual(t, "output_price", *record.Price1MOutputTokens, 4)
+	assertAlmostEqual(t, "e2e", *record.E2ETotalTimeSec, 9.1)
+	assertAlmostEqual(t, "ttfa", *record.TTFATotalTimeSec, 7.4)
+	assertAlmostEqual(t, "output_speed", *record.OutputSpeedTokSec, 296.47)
+	if record.ReasoningModel || record.Deprecated || record.Price1MBlended3To1 != nil || record.ContextWindowTokens != nil {
+		t.Fatal("V2 Free-only omitted fields must not be invented")
+	}
 }
 
-func TestBenchmarkModelRecordFromRow_DerivesCostAndValueFromOutputCostFallback(t *testing.T) {
-	row := map[string]interface{}{
-		"id":                     "host-glm",
-		"slug":                   "makora_glm-5-2",
-		"host_id":                "makora",
-		"price_1m_output_tokens": 3.9855,
-		"host": map[string]interface{}{
-			"short_name": "Makora",
-		},
-		"model": map[string]interface{}{
-			"id":                 "glm-5-2",
-			"slug":               "glm-5-2",
-			"name":               "GLM-5.2 (max)",
-			"short_name":         "GLM-5.2 (max)",
-			"reasoning_model":    true,
-			"deprecated":         false,
-			"intelligence_index": 51.0858347714416,
-			"intelligence_index_token_counts": map[string]interface{}{
-				"output_tokens": 136789844.0,
-			},
-		},
+func TestBenchmarkModelRecordFromV2Row_MapsProAliasesWithoutChangingMeaning(t *testing.T) {
+	row := v2ModelRow("model-pro", "Model Pro", 40, 14)
+	row["reasoning_model"] = true
+	row["context_window_tokens"] = 131072.0
+	row["openrouter_api_id"] = "openai/model-pro"
+	row["artificial_analysis_intelligence_index_token_counts"] = map[string]interface{}{
+		"input_tokens":     3_000_000.0,
+		"output_tokens":    2_000_000.0,
+		"reasoning_tokens": 1_000_000.0,
+		"answer_tokens":    1_000_000.0,
+	}
+	row["pricing"].(map[string]interface{})["price_1m_blended_3_to_1"] = 2.5
+	row["artificial_analysis_intelligence_index_cost"] = map[string]interface{}{
+		"total_cost":     14.0,
+		"input_cost":     6.0,
+		"reasoning_cost": 5.0,
+		"answer_cost":    3.0,
 	}
 
-	record, ok := benchmarkModelRecordFromRow(row, "2026-06-23T15:44:12Z")
+	record, ok := benchmarkModelRecordFromV2Row(row, "2026-02-16T00:00:00Z")
 	if !ok {
-		t.Fatal("expected record to parse")
+		t.Fatal("expected V2 Pro record to parse")
 	}
-	if record.CostToRunIndexOutputUSD == nil {
-		t.Fatal("expected output cost to be present")
+	if !record.ReasoningModel || !record.ReasoningModelKnown || record.ContextWindowTokens == nil || record.Price1MBlended3To1 == nil {
+		t.Fatal("expected documented Pro fields to map")
 	}
-	if record.CostToRunIndexTotalUSD == nil {
-		t.Fatal("expected total cost to fall back to output cost")
+	assertAlmostEqual(t, "context_window", *record.ContextWindowTokens, 131072)
+	assertAlmostEqual(t, "blended_price", *record.Price1MBlended3To1, 2.5)
+	assertAlmostEqual(t, "input_cost", *record.CostToRunIndexInputUSD, 6)
+	assertAlmostEqual(t, "output_cost", *record.CostToRunIndexOutputUSD, 8)
+	assertAlmostEqual(t, "input_tokens", *record.IntelligenceIndexInputTokens, 3_000_000)
+	assertAlmostEqual(t, "output_tokens", *record.IntelligenceIndexOutputTokens, 2_000_000)
+	if got, want := record.OpenRouterModelID, "openai/model-pro"; got != want {
+		t.Fatalf("OpenRouterModelID = %q, want %q", got, want)
 	}
-	if record.ValueScore == nil {
-		t.Fatal("expected value score to be derived from fallback total cost")
-	}
+}
 
-	assertAlmostEqual(t, "output_cost", *record.CostToRunIndexOutputUSD, 545.175923262)
-	assertAlmostEqual(t, "total_cost", *record.CostToRunIndexTotalUSD, 545.175923262)
-	assertAlmostEqual(t, "value_score", *record.ValueScore, 51.0858347714416/545.175923262)
+func TestBenchmarkModelRecordFromV2Row_KeepsRowsWithNullableFreeFields(t *testing.T) {
+	row := v2ModelRow("model-nullable", "Model Nullable", 40, 10)
+	row["model_creator"] = nil
+	row["artificial_analysis_intelligence_index_cost"] = nil
+	record, ok := benchmarkModelRecordFromV2Row(row, "2026-02-16T00:00:00Z")
+	if !ok {
+		t.Fatal("a nullable V2 Free field must not discard the model")
+	}
+	if record.CreatorName != "" || record.CostToRunIndexTotalUSD != nil || record.ValueScore != nil {
+		t.Fatal("nullable V2 Free fields must remain absent")
+	}
+}
+
+func TestFetchBenchmarkModelRows_FetchesAllV2PagesAndValidatesFields(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.Header.Get("x-api-key"), "test-key"; got != want {
+			t.Errorf("x-api-key = %q, want %q", got, want)
+		}
+		page := r.URL.Query().Get("page")
+		if page == "" {
+			t.Error("page query parameter missing")
+		}
+		payload := map[string]interface{}{
+			"tier":                       "free",
+			"intelligence_index_version": 4.1,
+			"pagination": map[string]interface{}{
+				"page":        map[string]int{"1": 1, "2": 2}[page],
+				"page_size":   1,
+				"total_pages": 2,
+				"has_more":    page == "1",
+			},
+			"data": []map[string]interface{}{v2ModelRow("model-"+page, "Model "+page, 40, 10)},
+		}
+		_ = json.NewEncoder(w).Encode(payload)
+	}))
+	defer server.Close()
+
+	raw, rows, err := fetchBenchmarkModelRowsWithClient(server.URL, "test-key", server.Client())
+	if err != nil {
+		t.Fatalf("fetchBenchmarkModelRowsWithClient() error = %v", err)
+	}
+	if got, want := len(rows), 2; got != want {
+		t.Fatalf("rows = %d, want %d", got, want)
+	}
+	pages, ok := raw["pages"].([]map[string]interface{})
+	if !ok || len(pages) != 2 {
+		t.Fatalf("raw pages = %#v, want two original V2 pages", raw["pages"])
+	}
+}
+
+func v2ModelRow(id, name string, intelligence, totalCost float64) map[string]interface{} {
+	return map[string]interface{}{
+		"id":           id,
+		"name":         name,
+		"slug":         id,
+		"release_date": "2026-01-01",
+		"model_creator": map[string]interface{}{
+			"id":   "creator-1",
+			"name": "Creator",
+		},
+		"evaluations": map[string]interface{}{
+			"artificial_analysis_intelligence_index": intelligence,
+			"artificial_analysis_coding_index":       20.0,
+			"artificial_analysis_agentic_index":      30.0,
+		},
+		"artificial_analysis_intelligence_index_cost": map[string]interface{}{
+			"total_cost": totalCost,
+		},
+		"pricing": map[string]interface{}{
+			"price_1m_input_tokens":       2.0,
+			"price_1m_output_tokens":      4.0,
+			"price_1m_cache_hit_tokens":   nil,
+			"price_1m_cache_write_tokens": nil,
+		},
+		"performance": map[string]interface{}{
+			"median_output_tokens_per_second":           296.47,
+			"median_time_to_first_token_seconds":        0.65,
+			"median_time_to_first_answer_token_seconds": 7.4,
+			"median_end_to_end_response_time_seconds":   9.1,
+		},
+	}
 }
 
 func TestFilterBenchmarkModels_ReasoningValidation(t *testing.T) {
@@ -500,52 +471,20 @@ func TestSortByCompositeRank_IgnoresSpeedDimension(t *testing.T) {
 	}
 }
 
-func TestBenchmarkModelRecordFromRow_ExtractsSpeedFields(t *testing.T) {
-	row := map[string]interface{}{
-		"id":                      "host-s",
-		"slug":                    "provider-s_model-s",
-		"host_id":                 "provider-s",
-		"price_1m_input_tokens":   1.0,
-		"price_1m_output_tokens":  2.0,
-		"price_1m_blended_3_to_1": 1.25,
-		"host": map[string]interface{}{
-			"short_name": "Provider S",
-		},
-		"model": map[string]interface{}{
-			"id":                 "model-s",
-			"slug":               "model-s",
-			"name":               "Model S",
-			"short_name":         "Model S",
-			"reasoning_model":    true,
-			"intelligence_index": 35.0,
-			"intelligence_index_token_counts": map[string]interface{}{
-				"input_tokens":  1000000.0,
-				"output_tokens": 500000.0,
-			},
-		},
-		"end_to_end_response_time_metrics": map[string]interface{}{
-			"total_time":     15.5,
-			"p95_total_time": 20.3,
-		},
-		"time_to_first_answer_token_metrics": map[string]interface{}{
-			"total_time": 12.1,
-		},
-		"timescaleData": map[string]interface{}{
-			"median_output_speed": 173.5,
-		},
-	}
-
-	record, ok := benchmarkModelRecordFromRow(row, "2026-02-16T00:00:00Z")
+func TestBenchmarkModelRecordFromV2Row_ExtractsSpeedFields(t *testing.T) {
+	record, ok := benchmarkModelRecordFromV2Row(v2ModelRow("model-s", "Model S", 35, 10), "2026-02-16T00:00:00Z")
 	if !ok {
 		t.Fatal("expected record to parse")
 	}
 	if record.E2ETotalTimeSec == nil {
 		t.Fatal("expected E2ETotalTimeSec to be present")
 	}
-	assertAlmostEqual(t, "e2e_total", *record.E2ETotalTimeSec, 15.5)
-	assertAlmostEqual(t, "e2e_p95", *record.E2EP95TimeSec, 20.3)
-	assertAlmostEqual(t, "ttfa_total", *record.TTFATotalTimeSec, 12.1)
-	assertAlmostEqual(t, "output_speed", *record.OutputSpeedTokSec, 173.5)
+	assertAlmostEqual(t, "e2e_total", *record.E2ETotalTimeSec, 9.1)
+	if record.E2EP95TimeSec != nil {
+		t.Fatal("V2 has no semantically equivalent end-to-end P95 field")
+	}
+	assertAlmostEqual(t, "ttfa_total", *record.TTFATotalTimeSec, 7.4)
+	assertAlmostEqual(t, "output_speed", *record.OutputSpeedTokSec, 296.47)
 }
 
 func TestParseSortKeys(t *testing.T) {

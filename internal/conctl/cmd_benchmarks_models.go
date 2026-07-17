@@ -9,6 +9,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -23,7 +24,10 @@ import (
 )
 
 const (
-	defaultBenchmarkModelsSourceURL = "https://artificialanalysis.ai/api/data/website/host-models/performance?prompt_length=medium&parallel_queries=single"
+	// The V2 Free endpoint is the supported public model-data API. It returns
+	// model-level data (not the retired website host-model rows) and requires a
+	// valid API key, including for the Free tier.
+	defaultBenchmarkModelsSourceURL = "https://artificialanalysis.ai/api/v2/language/models/free"
 	defaultBenchmarkModelsRepoFile  = "benchmarks/models_repo/models_flat.json"
 	defaultBenchmarkModelsRawFile   = "benchmarks/models_repo/source_raw.json"
 	defaultBenchmarkModelsAPIKeyEnv = "ARTIFICIAL_ANALYSIS_API_KEY"
@@ -55,7 +59,9 @@ type benchmarkModelRecord struct {
 	ShortName                        string   `json:"short_name"`
 	CreatorName                      string   `json:"creator_name,omitempty"`
 	ReasoningModel                   bool     `json:"reasoning_model"`
+	ReasoningModelKnown              bool     `json:"reasoning_model_known"`
 	Deprecated                       bool     `json:"deprecated"`
+	DeprecatedKnown                  bool     `json:"deprecated_known"`
 	ReleaseDate                      string   `json:"release_date,omitempty"`
 	ContextWindowTokens              *float64 `json:"context_window_tokens,omitempty"`
 	IntelligenceIndex                *float64 `json:"intelligence_index,omitempty"`
@@ -176,8 +182,8 @@ func benchmarksModelsCmd() *app.Command {
 func benchmarksModelsSyncRun(gf app.GlobalFlags, args []string) int {
 	fs := flag.NewFlagSet("benchmarks models sync", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	sourceURL := fs.String("source-url", defaultBenchmarkModelsSourceURL, "Artificial Analysis source URL")
-	apiKey := fs.String("api-key", "", "Optional API key value (fallback: env var)")
+	sourceURL := fs.String("source-url", defaultBenchmarkModelsSourceURL, "Artificial Analysis V2 model-list URL (Free default; Pro supported)")
+	apiKey := fs.String("api-key", "", "Artificial Analysis API key value (fallback: env var; required)")
 	apiKeyEnv := fs.String("api-key-env", defaultBenchmarkModelsAPIKeyEnv, "Env var name for API key fallback")
 	openRouterAPIKey := fs.String("openrouter-api-key", "", "Optional OpenRouter API key for model ID/name mapping")
 	openRouterAPIKeyEnv := fs.String("openrouter-api-key-env", defaultOpenRouterAPIKeyEnv, "Env var name for OpenRouter API key fallback")
@@ -190,6 +196,10 @@ func benchmarksModelsSyncRun(gf app.GlobalFlags, args []string) int {
 	key := strings.TrimSpace(*apiKey)
 	if key == "" && *apiKeyEnv != "" {
 		key = strings.TrimSpace(os.Getenv(*apiKeyEnv))
+	}
+	if key == "" {
+		fmt.Fprintf(os.Stderr, "Error: Artificial Analysis API key is required (set --api-key or %s)\n", *apiKeyEnv)
+		return app.ExitUsage
 	}
 	orKey := strings.TrimSpace(*openRouterAPIKey)
 	if orKey == "" && *openRouterAPIKeyEnv != "" {
@@ -276,7 +286,9 @@ type modelFilterOpts struct {
 // defaultModelFilterOpts returns the standard filter pipeline defaults.
 func defaultModelFilterOpts() modelFilterOpts {
 	return modelFilterOpts{
-		Reasoning: "true",
+		// The V2 Free response deliberately omits reasoning_model, so filtering
+		// it as false would silently remove every model.
+		Reasoning: "any",
 		Frontier:  true,
 		MinIntel:  defaultMinIntel,
 		MaxCost:   defaultMaxCost,
@@ -402,6 +414,7 @@ func benchmarksModelsSuggestRun(gf app.GlobalFlags, args []string) int {
 	top := fs.Int("top", 8, "Number of hints per section")
 	query := fs.String("query", "", "Case-insensitive filter against name/slug")
 	includeDeprecated := fs.Bool("include-deprecated", false, "Include deprecated models")
+	reasoning := fs.String("reasoning", "any", "Filter reasoning models: any|true|false")
 	if err := fs.Parse(args); err != nil {
 		return app.ExitUsage
 	}
@@ -421,7 +434,7 @@ func benchmarksModelsSuggestRun(gf app.GlobalFlags, args []string) int {
 		Track:             "balanced",
 		Query:             *query,
 		IncludeDeprecated: *includeDeprecated,
-		Reasoning:         "true",
+		Reasoning:         *reasoning,
 		MinIntel:          defaultMinIntel,
 		MaxCost:           defaultMaxCost,
 	})
@@ -470,46 +483,226 @@ func convertSuggestedModels(items []conmodels.Model) []benchmarkModelRecord {
 }
 
 func fetchBenchmarkModelRows(sourceURL, apiKey string, timeout time.Duration) (map[string]interface{}, []map[string]interface{}, error) {
-	req, err := http.NewRequest(http.MethodGet, sourceURL, nil)
+	return fetchBenchmarkModelRowsWithClient(sourceURL, apiKey, &http.Client{Timeout: timeout})
+}
+
+func fetchBenchmarkModelRowsWithClient(sourceURL, apiKey string, client *http.Client) (map[string]interface{}, []map[string]interface{}, error) {
+	if strings.TrimSpace(apiKey) == "" {
+		return nil, nil, errors.New("Artificial Analysis API key is required")
+	}
+	if client == nil {
+		return nil, nil, errors.New("source HTTP client is required")
+	}
+
+	parsedURL, err := url.Parse(sourceURL)
 	if err != nil {
-		return nil, nil, fmt.Errorf("build request: %w", err)
+		return nil, nil, fmt.Errorf("parse source URL: %w", err)
 	}
-	req.Header.Set("accept", "application/json")
-	if strings.TrimSpace(apiKey) != "" {
-		req.Header.Set("x-api-key", strings.TrimSpace(apiKey))
-	}
-
-	client := &http.Client{Timeout: timeout}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, nil, fmt.Errorf("fetch source: %w", err)
-	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		var snippet map[string]interface{}
-		_ = json.NewDecoder(resp.Body).Decode(&snippet)
-		return nil, nil, fmt.Errorf("source request failed: status=%d body=%v", resp.StatusCode, snippet)
-	}
-
-	var raw map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
-		return nil, nil, fmt.Errorf("decode source JSON: %w", err)
+	if parsedURL.Scheme != "https" || parsedURL.Host == "" {
+		return nil, nil, errors.New("source URL must be an absolute HTTPS URL")
 	}
 
 	rows := make([]map[string]interface{}, 0)
-	hostModelsRaw, ok := raw["hostModels"].([]interface{})
-	if !ok {
-		return nil, nil, errors.New("source payload does not include hostModels[]")
-	}
-	for _, item := range hostModelsRaw {
-		if m, ok := item.(map[string]interface{}); ok {
-			rows = append(rows, m)
+	pages := make([]map[string]interface{}, 0)
+	for page := 1; ; page++ {
+		pageURL := *parsedURL
+		query := pageURL.Query()
+		query.Set("page", strconv.Itoa(page))
+		pageURL.RawQuery = query.Encode()
+
+		req, err := http.NewRequest(http.MethodGet, pageURL.String(), nil)
+		if err != nil {
+			return nil, nil, fmt.Errorf("build request: %w", err)
+		}
+		req.Header.Set("accept", "application/json")
+		req.Header.Set("x-api-key", strings.TrimSpace(apiKey))
+
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, nil, fmt.Errorf("fetch source page %d: %w", page, err)
+		}
+		var raw map[string]interface{}
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			err = json.NewDecoder(resp.Body).Decode(&raw)
+		} else {
+			var snippet map[string]interface{}
+			_ = json.NewDecoder(resp.Body).Decode(&snippet)
+			err = fmt.Errorf("source request failed: status=%d body=%v", resp.StatusCode, snippet)
+		}
+		closeErr := resp.Body.Close()
+		if err != nil {
+			return nil, nil, err
+		}
+		if closeErr != nil {
+			return nil, nil, fmt.Errorf("close source response: %w", closeErr)
+		}
+
+		pageRows, hasMore, err := validateV2LanguageModelsPage(raw, page)
+		if err != nil {
+			return nil, nil, err
+		}
+		pages = append(pages, raw)
+		rows = append(rows, pageRows...)
+		if !hasMore {
+			break
 		}
 	}
-	return raw, rows, nil
+
+	// Keep every original page in source_raw.json. Combining all data in the
+	// first response would make its pagination metadata untrue.
+	return map[string]interface{}{
+		"source_url": sourceURL,
+		"pages":      pages,
+	}, rows, nil
+}
+
+// validateV2LanguageModelsPage validates the stable V2 list envelope before
+// mapping it. This prevents a successful but differently shaped response from
+// silently producing an empty model repository.
+func validateV2LanguageModelsPage(raw map[string]interface{}, requestedPage int) ([]map[string]interface{}, bool, error) {
+	if raw == nil {
+		return nil, false, errors.New("source payload is empty")
+	}
+	tier, ok := raw["tier"].(string)
+	if !ok || (tier != "free" && tier != "pro" && tier != "commercial") {
+		return nil, false, errors.New("source payload does not include tier")
+	}
+	version, ok := raw["intelligence_index_version"].(float64)
+	if !ok || version <= 0 {
+		return nil, false, errors.New("source payload does not include numeric intelligence_index_version")
+	}
+	pagination, ok := raw["pagination"].(map[string]interface{})
+	if !ok {
+		return nil, false, errors.New("source payload does not include pagination")
+	}
+	page, pageOK := integerFrom(pagination, "page")
+	totalPages, totalPagesOK := integerFrom(pagination, "total_pages")
+	pageSize, pageSizeOK := integerFrom(pagination, "page_size")
+	hasMore, hasMoreOK := pagination["has_more"].(bool)
+	if !pageOK || !totalPagesOK || !pageSizeOK || !hasMoreOK || page != requestedPage || pageSize < 1 || totalPages < page {
+		return nil, false, fmt.Errorf("source payload has invalid pagination for page %d", requestedPage)
+	}
+	if hasMore != (page < totalPages) {
+		return nil, false, fmt.Errorf("source payload pagination has inconsistent has_more on page %d", requestedPage)
+	}
+
+	data, ok := raw["data"].([]interface{})
+	if !ok {
+		return nil, false, errors.New("source payload does not include data[]")
+	}
+	rows := make([]map[string]interface{}, 0, len(data))
+	for i, item := range data {
+		row, ok := item.(map[string]interface{})
+		if !ok {
+			return nil, false, fmt.Errorf("source payload data[%d] is not an object", i)
+		}
+		if err := validateV2LanguageModelRow(row); err != nil {
+			return nil, false, fmt.Errorf("source payload data[%d]: %w", i, err)
+		}
+		rows = append(rows, row)
+	}
+	return rows, hasMore, nil
+}
+
+func validateV2LanguageModelRow(row map[string]interface{}) error {
+	for _, key := range []string{"id", "name", "slug"} {
+		if value, ok := row[key].(string); !ok || strings.TrimSpace(value) == "" {
+			return fmt.Errorf("%s must be a non-empty string", key)
+		}
+	}
+	if value, ok := row["release_date"]; !ok || (value != nil && !isString(value)) {
+		return errors.New("release_date must be a string or null")
+	}
+	if err := validateNullableObject(row, "model_creator", []string{"id", "name"}, true); err != nil {
+		return err
+	}
+	if err := validateObjectWithNullableNumbers(row, "evaluations", []string{
+		"artificial_analysis_intelligence_index",
+		"artificial_analysis_coding_index",
+		"artificial_analysis_agentic_index",
+	}); err != nil {
+		return err
+	}
+	if value, ok := row["artificial_analysis_intelligence_index_cost"]; !ok || (value != nil && !isObject(value)) {
+		return errors.New("artificial_analysis_intelligence_index_cost must be an object or null")
+	}
+	if value := row["artificial_analysis_intelligence_index_cost"]; value != nil {
+		cost := value.(map[string]interface{})
+		if !isNumber(cost["total_cost"]) {
+			return errors.New("artificial_analysis_intelligence_index_cost.total_cost must be a number")
+		}
+	}
+	if err := validateObjectWithNullableNumbers(row, "pricing", []string{
+		"price_1m_input_tokens",
+		"price_1m_output_tokens",
+		"price_1m_cache_hit_tokens",
+		"price_1m_cache_write_tokens",
+	}); err != nil {
+		return err
+	}
+	if err := validateObjectWithNullableNumbers(row, "performance", []string{
+		"median_output_tokens_per_second",
+		"median_time_to_first_token_seconds",
+		"median_time_to_first_answer_token_seconds",
+		"median_end_to_end_response_time_seconds",
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateNullableObject(row map[string]interface{}, key string, requiredStrings []string, allowNil bool) error {
+	value, ok := row[key]
+	if !ok || (value == nil && !allowNil) {
+		return fmt.Errorf("%s must be an object", key)
+	}
+	if value == nil {
+		return nil
+	}
+	object, ok := value.(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("%s must be an object or null", key)
+	}
+	for _, field := range requiredStrings {
+		if value, ok := object[field].(string); !ok || strings.TrimSpace(value) == "" {
+			return fmt.Errorf("%s.%s must be a non-empty string", key, field)
+		}
+	}
+	return nil
+}
+
+func validateObjectWithNullableNumbers(row map[string]interface{}, key string, fields []string) error {
+	value, ok := row[key]
+	if !ok || !isObject(value) {
+		return fmt.Errorf("%s must be an object", key)
+	}
+	object := value.(map[string]interface{})
+	for _, field := range fields {
+		value, exists := object[field]
+		if !exists || (value != nil && !isNumber(value)) {
+			return fmt.Errorf("%s.%s must be a number or null", key, field)
+		}
+	}
+	return nil
+}
+
+func isObject(value interface{}) bool {
+	_, ok := value.(map[string]interface{})
+	return ok
+}
+
+func isString(value interface{}) bool {
+	_, ok := value.(string)
+	return ok
+}
+
+func isNumber(value interface{}) bool {
+	switch value.(type) {
+	case float64, float32, int, int32, int64, json.Number:
+		return true
+	default:
+		return false
+	}
 }
 
 func loadOpenRouterCatalog(apiKey string, timeout time.Duration) openRouterCatalogResult {
@@ -555,6 +748,19 @@ func applyOpenRouterMappings(repo *benchmarkModelsRepo, openRouterModels []provi
 
 	mapped := 0
 	for i := range repo.Models {
+		if strings.TrimSpace(repo.Models[i].OpenRouterModelID) != "" {
+			// Pro V2 responses can provide the canonical OpenRouter ID directly.
+			// Treat it as an established mapping rather than replacing it with a
+			// heuristic catalog match.
+			if repo.Models[i].OpenRouterProvider == "" {
+				repo.Models[i].OpenRouterProvider = openRouterProviderFromID(repo.Models[i].OpenRouterModelID)
+			}
+			if repo.Models[i].OpenRouterMatchMethod == "" {
+				repo.Models[i].OpenRouterMatchMethod = "artificial_analysis"
+			}
+			mapped++
+			continue
+		}
 		match, ok := findOpenRouterMatch(repo.Models[i], candidates)
 		if !ok {
 			continue
@@ -902,23 +1108,15 @@ func jaccardSimilarity(a, b map[string]struct{}) float64 {
 }
 
 func buildBenchmarkModelsRepo(rows []map[string]interface{}, sourceURL, snapshotAt string) benchmarkModelsRepo {
-	// Collect all host entries per model.
-	allByModel := make(map[string][]benchmarkModelRecord, len(rows))
+	// V2 returns one consolidated row per model. Deduplicate defensively by ID
+	// so a malformed paginated response cannot create duplicate suggestions.
+	byModel := make(map[string]benchmarkModelRecord, len(rows))
 	for _, row := range rows {
-		record, ok := benchmarkModelRecordFromRow(row, snapshotAt)
+		record, ok := benchmarkModelRecordFromV2Row(row, snapshotAt)
 		if !ok || strings.TrimSpace(record.ModelID) == "" {
 			continue
 		}
-		allByModel[record.ModelID] = append(allByModel[record.ModelID], record)
-	}
-
-	// Select one representative per model:
-	// - If computed_performance_host_model_id is set, use that host (creator's API).
-	// - Otherwise, use the median-priced host across providers.
-	// This matches the AA website methodology: "first-party API or median across providers."
-	byModel := make(map[string]benchmarkModelRecord, len(allByModel))
-	for modelID, entries := range allByModel {
-		byModel[modelID] = selectRepresentativeHost(entries)
+		byModel[record.ModelID] = record
 	}
 
 	models := make([]benchmarkModelRecord, 0, len(byModel))
@@ -948,103 +1146,76 @@ func buildBenchmarkModelsRepo(rows []map[string]interface{}, sourceURL, snapshot
 	}
 }
 
-// selectRepresentativeHost picks the host entry that matches what AA displays:
-// the creator's first-party API (via computed_performance_host_model_id) when
-// available, otherwise the median-priced host across all providers.
-func selectRepresentativeHost(entries []benchmarkModelRecord) benchmarkModelRecord {
-	if len(entries) == 1 {
-		return entries[0]
-	}
-
-	// Prefer the computed_performance_host_model_id entry (creator's API).
-	for _, e := range entries {
-		if strings.TrimSpace(e.ComputedPerformanceHostModelID) != "" &&
-			e.SourceHostModelID == e.ComputedPerformanceHostModelID {
-			return e
-		}
-	}
-
-	// No preferred host — pick median by blended price.
-	// Filter to entries with pricing data.
-	priced := make([]benchmarkModelRecord, 0, len(entries))
-	for _, e := range entries {
-		if e.Price1MBlended3To1 != nil {
-			priced = append(priced, e)
-		}
-	}
-	if len(priced) == 0 {
-		return entries[0]
-	}
-	sort.SliceStable(priced, func(i, j int) bool {
-		return *priced[i].Price1MBlended3To1 < *priced[j].Price1MBlended3To1
-	})
-	return priced[len(priced)/2]
-}
-
-func benchmarkModelRecordFromRow(row map[string]interface{}, snapshotAt string) (benchmarkModelRecord, bool) {
-	model := mapFrom(row, "model")
-	if model == nil {
+func benchmarkModelRecordFromV2Row(row map[string]interface{}, snapshotAt string) (benchmarkModelRecord, bool) {
+	if row == nil {
 		return benchmarkModelRecord{}, false
 	}
-	host := mapFrom(row, "host")
-	creator := mapFrom(model, "model_creators")
-	tokenCounts := mapFrom(model, "intelligence_index_token_counts")
-	e2eMetrics := mapFrom(row, "end_to_end_response_time_metrics")
-	ttfaMetrics := mapFrom(row, "time_to_first_answer_token_metrics")
-	tsData := mapFrom(row, "timescaleData")
+	creator := mapFrom(row, "model_creator")
+	evaluations := mapFrom(row, "evaluations")
+	pricing := mapFrom(row, "pricing")
+	performance := mapFrom(row, "performance")
+	cost := mapFrom(row, "artificial_analysis_intelligence_index_cost")
+	tokenCounts := mapFrom(row, "artificial_analysis_intelligence_index_token_counts")
+	if evaluations == nil || pricing == nil || performance == nil {
+		return benchmarkModelRecord{}, false
+	}
 
 	record := benchmarkModelRecord{
-		ModelID:                          stringFrom(model, "id"),
-		Slug:                             fallbackString(stringFrom(model, "slug"), stringFrom(row, "slug")),
-		Name:                             fallbackString(stringFrom(model, "name"), stringFrom(row, "name")),
-		ShortName:                        fallbackString(stringFrom(model, "short_name"), stringFrom(model, "name")),
-		CreatorName:                      fallbackString(stringFrom(creator, "name"), stringFrom(host, "name")),
-		ReasoningModel:                   boolFrom(model, "reasoning_model"),
-		Deprecated:                       boolFrom(model, "deprecated"),
-		ReleaseDate:                      stringFrom(model, "release_date"),
-		ContextWindowTokens:              floatPointerFrom(model, "context_window_tokens"),
-		IntelligenceIndex:                floatPointerFrom(model, "intelligence_index"),
-		Price1MInputTokens:               floatPointerFrom(row, "price_1m_input_tokens"),
-		Price1MOutputTokens:              floatPointerFrom(row, "price_1m_output_tokens"),
-		Price1MBlended3To1:               floatPointerFrom(row, "price_1m_blended_3_to_1"),
+		ModelID:                          stringFrom(row, "id"),
+		Slug:                             stringFrom(row, "slug"),
+		Name:                             stringFrom(row, "name"),
+		ShortName:                        stringFrom(row, "name"),
+		CreatorName:                      stringFrom(creator, "name"),
+		ReasoningModel:                   boolFrom(row, "reasoning_model"),
+		ReasoningModelKnown:              hasKey(row, "reasoning_model"),
+		Deprecated:                       boolFrom(row, "deprecated"),
+		DeprecatedKnown:                  hasKey(row, "deprecated"),
+		ReleaseDate:                      stringFrom(row, "release_date"),
+		ContextWindowTokens:              floatPointerFrom(row, "context_window_tokens"),
+		IntelligenceIndex:                floatPointerFrom(evaluations, "artificial_analysis_intelligence_index"),
+		Price1MInputTokens:               floatPointerFrom(pricing, "price_1m_input_tokens"),
+		Price1MOutputTokens:              floatPointerFrom(pricing, "price_1m_output_tokens"),
+		Price1MBlended3To1:               floatPointerFrom(pricing, "price_1m_blended_3_to_1"),
 		IntelligenceIndexInputTokens:     floatPointerFrom(tokenCounts, "input_tokens"),
 		IntelligenceIndexOutputTokens:    floatPointerFrom(tokenCounts, "output_tokens"),
 		IntelligenceIndexReasoningTokens: floatPointerFrom(tokenCounts, "reasoning_tokens"),
 		IntelligenceIndexAnswerTokens:    floatPointerFrom(tokenCounts, "answer_tokens"),
-		ModelURL:                         stringFrom(model, "model_url"),
-		HostsURL:                         fallbackString(stringFrom(row, "hosts_url"), stringFrom(model, "hosts_url")),
-		SourceHostModelID:                stringFrom(row, "id"),
-		SourceHostModelSlug:              stringFrom(row, "slug"),
-		SourceHostID:                     stringFrom(row, "host_id"),
-		SourceHostName:                   stringFrom(host, "short_name"),
-		ComputedPerformanceHostModelID:   stringFrom(model, "computed_performance_host_model_id"),
-		Source:                           "artificialanalysis.host_models_performance",
+		E2ETotalTimeSec:                  floatPointerFrom(performance, "median_end_to_end_response_time_seconds"),
+		TTFATotalTimeSec:                 floatPointerFrom(performance, "median_time_to_first_answer_token_seconds"),
+		OutputSpeedTokSec:                floatPointerFrom(performance, "median_output_tokens_per_second"),
+		CostToRunIndexTotalUSD:           floatPointerFrom(cost, "total_cost"),
+		CostToRunIndexInputUSD:           floatPointerFrom(cost, "input_cost"),
+		OpenRouterModelID:                stringFrom(row, "openrouter_api_id"),
+		OpenRouterProvider:               openRouterProviderFromID(stringFrom(row, "openrouter_api_id")),
+		Source:                           "artificialanalysis.v2.language_models",
 		SnapshotAt:                       snapshotAt,
 	}
-	if record.ShortName == "" {
-		record.ShortName = record.Name
+	record.CostToRunIndexOutputUSD = sumAllFloatPointers(
+		floatPointerFrom(cost, "reasoning_cost"),
+		floatPointerFrom(cost, "answer_cost"),
+	)
+	if record.OpenRouterModelID != "" {
+		record.OpenRouterMatchMethod = "artificial_analysis"
 	}
-	record.E2ETotalTimeSec = floatPointerFrom(e2eMetrics, "total_time")
-	record.E2EP95TimeSec = floatPointerFrom(e2eMetrics, "p95_total_time")
-	record.TTFATotalTimeSec = floatPointerFrom(ttfaMetrics, "total_time")
-	record.OutputSpeedTokSec = floatPointerFrom(tsData, "median_output_speed")
-	record.CostToRunIndexInputUSD = computeCost(record.IntelligenceIndexInputTokens, record.Price1MInputTokens)
-	record.CostToRunIndexOutputUSD = computeCost(record.IntelligenceIndexOutputTokens, record.Price1MOutputTokens)
-	if record.CostToRunIndexInputUSD != nil || record.CostToRunIndexOutputUSD != nil {
-		total := 0.0
-		if record.CostToRunIndexInputUSD != nil {
-			total += *record.CostToRunIndexInputUSD
-		}
-		if record.CostToRunIndexOutputUSD != nil {
-			total += *record.CostToRunIndexOutputUSD
-		}
-		record.CostToRunIndexTotalUSD = &total
-		if record.IntelligenceIndex != nil && total > 0 {
-			value := *record.IntelligenceIndex / total
-			record.ValueScore = &value
-		}
+	if record.ModelID == "" || record.Slug == "" || record.Name == "" {
+		return benchmarkModelRecord{}, false
+	}
+	if record.IntelligenceIndex != nil && record.CostToRunIndexTotalUSD != nil && *record.CostToRunIndexTotalUSD > 0 {
+		value := *record.IntelligenceIndex / *record.CostToRunIndexTotalUSD
+		record.ValueScore = &value
 	}
 	return record, true
+}
+
+func sumAllFloatPointers(values ...*float64) *float64 {
+	total := 0.0
+	for _, value := range values {
+		if value == nil {
+			return nil
+		}
+		total += *value
+	}
+	return &total
 }
 
 func loadBenchmarkModelsRepo(path string) (*benchmarkModelsRepo, error) {
@@ -1672,6 +1843,11 @@ func mapFrom(m map[string]interface{}, key string) map[string]interface{} {
 	return out
 }
 
+func hasKey(m map[string]interface{}, key string) bool {
+	_, ok := m[key]
+	return ok
+}
+
 func stringFrom(m map[string]interface{}, key string) string {
 	if m == nil {
 		return ""
@@ -1705,6 +1881,44 @@ func boolFrom(m map[string]interface{}, key string) bool {
 	default:
 		return false
 	}
+}
+
+func integerFrom(m map[string]interface{}, key string) (int, bool) {
+	if m == nil {
+		return 0, false
+	}
+	value, ok := m[key]
+	if !ok || value == nil {
+		return 0, false
+	}
+	var number float64
+	switch n := value.(type) {
+	case float64:
+		number = n
+	case float32:
+		number = float64(n)
+	case int:
+		return n, true
+	case int32:
+		return int(n), true
+	case int64:
+		if n > int64(math.MaxInt) || n < int64(math.MinInt) {
+			return 0, false
+		}
+		return int(n), true
+	case json.Number:
+		parsed, err := n.Int64()
+		if err != nil || parsed > int64(math.MaxInt) || parsed < int64(math.MinInt) {
+			return 0, false
+		}
+		return int(parsed), true
+	default:
+		return 0, false
+	}
+	if math.Trunc(number) != number || number > float64(math.MaxInt) || number < float64(math.MinInt) {
+		return 0, false
+	}
+	return int(number), true
 }
 
 func floatPointerFrom(m map[string]interface{}, key string) *float64 {
@@ -1749,23 +1963,6 @@ func floatPointerFrom(m map[string]interface{}, key string) *float64 {
 	default:
 		return nil
 	}
-}
-
-func computeCost(tokens, pricePer1M *float64) *float64 {
-	if tokens == nil || pricePer1M == nil {
-		return nil
-	}
-	cost := (*tokens / 1_000_000.0) * (*pricePer1M)
-	return &cost
-}
-
-func fallbackString(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func ptrFloatOr(value *float64, fallback float64) float64 {

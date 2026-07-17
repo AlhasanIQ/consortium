@@ -202,21 +202,9 @@ describe('adminActionErrorMessage', () => {
   });
 
   it.each([
-    [
-      'a 404 without API text',
-      { response: { status: 404, data: {} } },
-      'This external run is no longer available.',
-    ],
-    [
-      'a 409 with a different API error',
-      { response: { status: 409, data: { error: 'run_locked' } } },
-      'run_locked',
-    ],
-    [
-      'a response without an API error',
-      { response: { status: 500, data: {} } },
-      'Failed to stop the external run.',
-    ],
+    ['a 404 without API text', { response: { status: 404, data: {} } }, 'This external run is no longer available.'],
+    ['a 409 with a different API error', { response: { status: 409, data: { error: 'run_locked' } } }, 'run_locked'],
+    ['a response without an API error', { response: { status: 500, data: {} } }, 'Failed to stop the external run.'],
   ])('maps %s to stable operator text', (_caseName, error, expected) => {
     expect(adminActionErrorMessage(error)).toBe(expected);
   });

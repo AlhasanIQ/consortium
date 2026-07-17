@@ -229,7 +229,7 @@ func sanitizeForJSON(v any) any {
 		return nil
 	}
 	switch rv.Kind() {
-	case reflect.Ptr:
+	case reflect.Pointer:
 		if rv.IsNil() {
 			return nil
 		}

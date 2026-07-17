@@ -22,6 +22,12 @@ linters:
       - path: _test\.go
         linters:
           - errcheck
+      # SA5011 does not model testing.T.Fatal as terminating control flow;
+      # these test guards intentionally protect the dereferences below.
+      - path: _test\.go
+        text: "SA5011"
+        linters:
+          - staticcheck
 
 formatters:
   enable:

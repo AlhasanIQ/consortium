@@ -152,25 +152,25 @@ func buildGEPAMutationPrompt(currentPrompt string, failures []FailureCase, learn
 	b.WriteString(currentPrompt)
 	b.WriteString("\n\n")
 
-	b.WriteString(fmt.Sprintf("## Reflection Batch (%d failures)\n", len(failures)))
+	fmt.Fprintf(&b, "## Reflection Batch (%d failures)\n", len(failures))
 	categoryCounts := countFailureCategories(failures)
 	for _, fc := range failures {
 		category := coalesceString(strings.TrimSpace(fc.Category), "uncategorized")
-		b.WriteString(fmt.Sprintf("- %s | expected=%q predicted=%q | category=%s\n", fc.ItemID, fc.CorrectAnswer, fc.Predicted, category))
+		fmt.Fprintf(&b, "- %s | expected=%q predicted=%q | category=%s\n", fc.ItemID, fc.CorrectAnswer, fc.Predicted, category)
 		if child := strings.TrimSpace(fc.ChildPredicted); child != "" {
-			b.WriteString(fmt.Sprintf("  Child predicted: %q\n", child))
+			fmt.Fprintf(&b, "  Child predicted: %q\n", child)
 		}
 		if question := trimForPrompt(fc.Question, 360); question != "" {
-			b.WriteString(fmt.Sprintf("  Prompted task excerpt: %s\n", question))
+			fmt.Fprintf(&b, "  Prompted task excerpt: %s\n", question)
 		}
 		if reason := strings.TrimSpace(fc.FailureReason); reason != "" {
-			b.WriteString(fmt.Sprintf("  Failure reason: %s\n", reason))
+			fmt.Fprintf(&b, "  Failure reason: %s\n", reason)
 		}
 		if votes := summarizeAgentAnswers(fc.AgentAnswers, 6); votes != "" {
-			b.WriteString(fmt.Sprintf("  Agent votes (model:answer:mark): %s\n", votes))
+			fmt.Fprintf(&b, "  Agent votes (model:answer:mark): %s\n", votes)
 		}
 		if diagnosis := strings.TrimSpace(fc.Diagnosis); diagnosis != "" {
-			b.WriteString(fmt.Sprintf("  Diagnosis hint: %s\n", trimForPrompt(diagnosis, 240)))
+			fmt.Fprintf(&b, "  Diagnosis hint: %s\n", trimForPrompt(diagnosis, 240))
 		}
 		if traces := formatNodeTraces(fc.NodeTraces); traces != "" {
 			b.WriteString(traces)
@@ -223,16 +223,16 @@ func buildGEPACandidateProposalPrompt(
 		b.WriteString(section)
 	}
 
-	b.WriteString(fmt.Sprintf("Component key: %s\n", componentKey))
-	b.WriteString(fmt.Sprintf("Selection strategy: %s\n", settings.CandidateSelectionStrategy))
-	b.WriteString(fmt.Sprintf("Component selector: %s\n", settings.ComponentSelector))
-	b.WriteString(fmt.Sprintf("Use merge: %t\n\n", settings.UseMerge))
+	fmt.Fprintf(&b, "Component key: %s\n", componentKey)
+	fmt.Fprintf(&b, "Selection strategy: %s\n", settings.CandidateSelectionStrategy)
+	fmt.Fprintf(&b, "Component selector: %s\n", settings.ComponentSelector)
+	fmt.Fprintf(&b, "Use merge: %t\n\n", settings.UseMerge)
 	b.WriteString("## Current Prompt\n")
 	b.WriteString(currentPrompt)
 	b.WriteString("\n\n")
-	b.WriteString(fmt.Sprintf("## Reflective Dataset (%d failures)\n", len(failures)))
+	fmt.Fprintf(&b, "## Reflective Dataset (%d failures)\n", len(failures))
 	for _, fc := range failures {
-		b.WriteString(fmt.Sprintf("- id=%s category=%s expected=%q predicted=%q\n", fc.ItemID, coalesceString(strings.TrimSpace(fc.Category), "uncategorized"), fc.CorrectAnswer, fc.Predicted))
+		fmt.Fprintf(&b, "- id=%s category=%s expected=%q predicted=%q\n", fc.ItemID, coalesceString(strings.TrimSpace(fc.Category), "uncategorized"), fc.CorrectAnswer, fc.Predicted)
 		if q := trimForPrompt(fc.Question, 220); q != "" {
 			b.WriteString("  Inputs: " + q + "\n")
 		}
@@ -261,7 +261,7 @@ func buildGEPACandidateProposalPrompt(
 	b.WriteString("Reflect over feedback and propose targeted instruction mutations.\n")
 	b.WriteString("- Preserve stable sections unless reflection indicates change.\n")
 	b.WriteString("- Avoid benchmark-specific hacks.\n")
-	b.WriteString(fmt.Sprintf("- Return exactly %d candidates.\n\n", numCandidates))
+	fmt.Fprintf(&b, "- Return exactly %d candidates.\n\n", numCandidates)
 	b.WriteString("Return ONLY valid JSON:\n")
 	b.WriteString("{\n")
 	b.WriteString("  \"candidates\": [\n")
@@ -335,16 +335,16 @@ func mergeGEPAReflectiveCandidates(
 	prompt.WriteString("Merge two reflective instruction candidates into one superior prompt.\n")
 	prompt.WriteString("Your goal is to combine the strengths of both candidates, producing a prompt\n")
 	prompt.WriteString("that handles more failure patterns than either candidate alone.\n\n")
-	prompt.WriteString(fmt.Sprintf("Component key: %s\n\n", componentKey))
+	fmt.Fprintf(&prompt, "Component key: %s\n\n", componentKey)
 	prompt.WriteString("Candidate A:\n")
 	prompt.WriteString(a.RevisedPrompt)
 	if a.ChangesSummary != "" {
-		prompt.WriteString(fmt.Sprintf("\n(Focus: %s)", a.ChangesSummary))
+		fmt.Fprintf(&prompt, "\n(Focus: %s)", a.ChangesSummary)
 	}
 	prompt.WriteString("\n\nCandidate B:\n")
 	prompt.WriteString(b.RevisedPrompt)
 	if b.ChangesSummary != "" {
-		prompt.WriteString(fmt.Sprintf("\n(Focus: %s)", b.ChangesSummary))
+		fmt.Fprintf(&prompt, "\n(Focus: %s)", b.ChangesSummary)
 	}
 	// R12: Provide failure context so the merge is validation-aware — the LLM
 	// can see what failure types exist and craft a merged prompt that addresses

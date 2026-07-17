@@ -130,9 +130,9 @@ func (d *DebateDecideAggregator) Aggregate(ctx context.Context, inputs []AgentOu
 	for i, answer := range campOrder {
 		name := campPresentationName(i)
 		members := camps[answer]
-		campsBuilder.WriteString(fmt.Sprintf("### %s (Answer: %s, %d agent(s)):\n", name, answer, len(members)))
+		fmt.Fprintf(&campsBuilder, "### %s (Answer: %s, %d agent(s)):\n", name, answer, len(members))
 		for j, member := range members {
-			campsBuilder.WriteString(fmt.Sprintf("--- Agent %d argument ---\n%s\n\n", j+1, member.Output))
+			fmt.Fprintf(&campsBuilder, "--- Agent %d argument ---\n%s\n\n", j+1, member.Output)
 		}
 	}
 

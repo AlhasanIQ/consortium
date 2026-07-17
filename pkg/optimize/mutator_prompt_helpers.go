@@ -16,8 +16,8 @@ func formatLearningLogSection(learning []LearningEntry, limit int) string {
 	}
 	var b strings.Builder
 	for _, entry := range entries {
-		b.WriteString(fmt.Sprintf("- Gen %d [%s]: %s -> %s (delta %.4f)\n",
-			entry.Generation, entry.MutationType, entry.Description, entry.Outcome, entry.FitnessDelta))
+		fmt.Fprintf(&b, "- Gen %d [%s]: %s -> %s (delta %.4f)\n",
+			entry.Generation, entry.MutationType, entry.Description, entry.Outcome, entry.FitnessDelta)
 	}
 	return b.String()
 }
@@ -31,8 +31,8 @@ func formatLearningLogSectionReflective(learning []LearningEntry, limit int) str
 	}
 	var b strings.Builder
 	for _, entry := range entries {
-		b.WriteString(fmt.Sprintf("- Gen %d [%s] %s | outcome=%s | delta=%.4f\n",
-			entry.Generation, entry.MutationType, entry.Description, entry.Outcome, entry.FitnessDelta))
+		fmt.Fprintf(&b, "- Gen %d [%s] %s | outcome=%s | delta=%.4f\n",
+			entry.Generation, entry.MutationType, entry.Description, entry.Outcome, entry.FitnessDelta)
 	}
 	return b.String()
 }
@@ -47,8 +47,8 @@ func formatLearningLogSectionCompact(learning []LearningEntry, limit int, descLi
 	}
 	var b strings.Builder
 	for _, entry := range entries {
-		b.WriteString(fmt.Sprintf("- Gen %d [%s] outcome=%s delta=%.4f desc=%s\n",
-			entry.Generation, entry.MutationType, entry.Outcome, entry.FitnessDelta, trimForPrompt(entry.Description, descLimit)))
+		fmt.Fprintf(&b, "- Gen %d [%s] outcome=%s delta=%.4f desc=%s\n",
+			entry.Generation, entry.MutationType, entry.Outcome, entry.FitnessDelta, trimForPrompt(entry.Description, descLimit))
 	}
 	return b.String()
 }
@@ -61,12 +61,12 @@ func formatObjectivesSection(header string, spec *OptimizeSpec) string {
 	costWeight := objectiveWeight(spec, "cost_per_item")
 	var b strings.Builder
 	b.WriteString(header + "\n")
-	b.WriteString(fmt.Sprintf("- maximize adjusted_accuracy (weight %.2f)\n", primaryWeight))
-	b.WriteString(fmt.Sprintf("- minimize cost_per_item (weight %.2f)\n", costWeight))
+	fmt.Fprintf(&b, "- maximize adjusted_accuracy (weight %.2f)\n", primaryWeight)
+	fmt.Fprintf(&b, "- minimize cost_per_item (weight %.2f)\n", costWeight)
 	if spec != nil && len(spec.Constraints) > 0 {
 		b.WriteString("Constraints:\n")
 		for _, c := range spec.Constraints {
-			b.WriteString(fmt.Sprintf("- %s %s %.4f\n", c.Metric, c.Op, c.Value))
+			fmt.Fprintf(&b, "- %s %s %.4f\n", c.Metric, c.Op, c.Value)
 		}
 	}
 	return b.String()

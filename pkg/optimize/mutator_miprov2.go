@@ -131,24 +131,24 @@ func buildMIPROv2MutationPrompt(currentPrompt string, failures []FailureCase, le
 	b.WriteString(currentPrompt)
 	b.WriteString("\n\n")
 
-	b.WriteString(fmt.Sprintf("## Failure Minibatch (%d samples)\n", len(failures)))
+	fmt.Fprintf(&b, "## Failure Minibatch (%d samples)\n", len(failures))
 	categoryCounts := countFailureCategories(failures)
 	for _, fc := range failures {
-		b.WriteString(fmt.Sprintf("- Item %s | expected=%q predicted=%q\n", fc.ItemID, fc.CorrectAnswer, fc.Predicted))
+		fmt.Fprintf(&b, "- Item %s | expected=%q predicted=%q\n", fc.ItemID, fc.CorrectAnswer, fc.Predicted)
 		if child := strings.TrimSpace(fc.ChildPredicted); child != "" {
-			b.WriteString(fmt.Sprintf("  Child predicted: %q\n", child))
+			fmt.Fprintf(&b, "  Child predicted: %q\n", child)
 		}
 		if question := trimForPrompt(fc.Question, 400); question != "" {
-			b.WriteString(fmt.Sprintf("  Question excerpt: %s\n", question))
+			fmt.Fprintf(&b, "  Question excerpt: %s\n", question)
 		}
 		if reason := strings.TrimSpace(fc.FailureReason); reason != "" {
-			b.WriteString(fmt.Sprintf("  Failure reason: %s\n", reason))
+			fmt.Fprintf(&b, "  Failure reason: %s\n", reason)
 		}
 		if votes := summarizeAgentAnswers(fc.AgentAnswers, 6); votes != "" {
-			b.WriteString(fmt.Sprintf("  Agent votes (model:answer:mark): %s\n", votes))
+			fmt.Fprintf(&b, "  Agent votes (model:answer:mark): %s\n", votes)
 		}
 		if diagnosis := strings.TrimSpace(fc.Diagnosis); diagnosis != "" {
-			b.WriteString(fmt.Sprintf("  Diagnosis hint: %s\n", trimForPrompt(diagnosis, 240)))
+			fmt.Fprintf(&b, "  Diagnosis hint: %s\n", trimForPrompt(diagnosis, 240))
 		}
 		if traces := formatNodeTraces(fc.NodeTraces); traces != "" {
 			b.WriteString(traces)
@@ -202,13 +202,13 @@ func buildMIPROv2CandidateProposalPrompt(
 		b.WriteString(section)
 	}
 
-	b.WriteString(fmt.Sprintf("## Component\n- key: %s\n\n", componentKey))
+	fmt.Fprintf(&b, "## Component\n- key: %s\n\n", componentKey)
 	b.WriteString("## Current Prompt\n")
 	b.WriteString(currentPrompt)
 	b.WriteString("\n\n")
-	b.WriteString(fmt.Sprintf("## Failure Minibatch (%d)\n", len(failures)))
+	fmt.Fprintf(&b, "## Failure Minibatch (%d)\n", len(failures))
 	for _, fc := range failures {
-		b.WriteString(fmt.Sprintf("- %s | expected=%q predicted=%q | category=%s\n", fc.ItemID, fc.CorrectAnswer, fc.Predicted, coalesceString(strings.TrimSpace(fc.Category), "uncategorized")))
+		fmt.Fprintf(&b, "- %s | expected=%q predicted=%q | category=%s\n", fc.ItemID, fc.CorrectAnswer, fc.Predicted, coalesceString(strings.TrimSpace(fc.Category), "uncategorized"))
 		if q := trimForPrompt(fc.Question, 260); q != "" {
 			b.WriteString("  Question: " + q + "\n")
 		}
@@ -224,10 +224,10 @@ func buildMIPROv2CandidateProposalPrompt(
 		b.WriteString("- none\n")
 	} else {
 		for i, set := range demoSets {
-			b.WriteString(fmt.Sprintf("- Set %d:\n", i+1))
+			fmt.Fprintf(&b, "- Set %d:\n", i+1)
 			for _, item := range set {
 				q := trimForPrompt(item.Question, 160)
-				b.WriteString(fmt.Sprintf("  - Q: %s\n    Gold: %q\n", q, item.CorrectAnswer))
+				fmt.Fprintf(&b, "  - Q: %s\n    Gold: %q\n", q, item.CorrectAnswer)
 			}
 		}
 	}
@@ -239,7 +239,7 @@ func buildMIPROv2CandidateProposalPrompt(
 	b.WriteString("Produce diverse but benchmark-agnostic instruction candidates.\n")
 	b.WriteString("- Keep candidates concise and operationally robust.\n")
 	b.WriteString("- No benchmark-specific answer hacks.\n")
-	b.WriteString(fmt.Sprintf("- Return exactly %d candidates.\n\n", numCandidates))
+	fmt.Fprintf(&b, "- Return exactly %d candidates.\n\n", numCandidates)
 	b.WriteString("Return ONLY valid JSON:\n")
 	b.WriteString("{\n")
 	b.WriteString("  \"candidates\": [\n")

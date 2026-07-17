@@ -356,7 +356,7 @@ func (p *PeerMatrixAggregator) executeSingleEvaluation(
 		var rubricBuilder strings.Builder
 		rubricBuilder.WriteString("Scoring Rubric:\n")
 		for _, criterion := range cfg.Rubric {
-			rubricBuilder.WriteString(fmt.Sprintf("- %s (%.0f%%): %s\n", normalizeRubricKey(criterion.Name), criterion.Weight*100, criterion.Description))
+			fmt.Fprintf(&rubricBuilder, "- %s (%.0f%%): %s\n", normalizeRubricKey(criterion.Name), criterion.Weight*100, criterion.Description)
 		}
 		rubricBuilder.WriteString("\n")
 		rubricText = rubricBuilder.String()

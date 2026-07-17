@@ -75,40 +75,40 @@ func AppendIteration(workdir string, iteration int, decision *Decision, accepted
 
 	var b strings.Builder
 	b.WriteString("\n---\n\n")
-	b.WriteString(fmt.Sprintf("## Iteration %d — %s\n", iteration, status))
-	b.WriteString(fmt.Sprintf("**Accuracy:** %.1f%%", decision.Accuracy*100))
-	b.WriteString(fmt.Sprintf(" | Parse: %.0f%%", decision.ParseRate*100))
-	b.WriteString(fmt.Sprintf(" | Cost/item: $%.4f", decision.CostPerItem))
+	fmt.Fprintf(&b, "## Iteration %d — %s\n", iteration, status)
+	fmt.Fprintf(&b, "**Accuracy:** %.1f%%", decision.Accuracy*100)
+	fmt.Fprintf(&b, " | Parse: %.0f%%", decision.ParseRate*100)
+	fmt.Fprintf(&b, " | Cost/item: $%.4f", decision.CostPerItem)
 	if decision.AvgLatencyMS > 0 {
-		b.WriteString(fmt.Sprintf(" | Latency: %.0fms avg", decision.AvgLatencyMS))
+		fmt.Fprintf(&b, " | Latency: %.0fms avg", decision.AvgLatencyMS)
 	}
 	if decision.P95LatencyMS > 0 {
-		b.WriteString(fmt.Sprintf(" / %.0fms p95", decision.P95LatencyMS))
+		fmt.Fprintf(&b, " / %.0fms p95", decision.P95LatencyMS)
 	}
-	b.WriteString(fmt.Sprintf(" | Failed: %d", decision.FailedItems))
+	fmt.Fprintf(&b, " | Failed: %d", decision.FailedItems)
 	if decision.TotalItems > 0 {
-		b.WriteString(fmt.Sprintf(" | Items: %d", decision.TotalItems))
+		fmt.Fprintf(&b, " | Items: %d", decision.TotalItems)
 	}
 	b.WriteString("\n")
-	b.WriteString(fmt.Sprintf("**Run:** %s\n", decision.RunID))
+	fmt.Fprintf(&b, "**Run:** %s\n", decision.RunID)
 	if decision.TargetedReplayRunID != "" {
 		replayStatus := "failed"
 		if decision.TargetedReplayPass {
 			replayStatus = "passed"
 		}
 		if decision.TargetedReplayItem != "" {
-			b.WriteString(fmt.Sprintf("**Targeted replay:** %s (item %s, run %s)\n", replayStatus, decision.TargetedReplayItem, decision.TargetedReplayRunID))
+			fmt.Fprintf(&b, "**Targeted replay:** %s (item %s, run %s)\n", replayStatus, decision.TargetedReplayItem, decision.TargetedReplayRunID)
 		} else {
-			b.WriteString(fmt.Sprintf("**Targeted replay:** %s (run %s)\n", replayStatus, decision.TargetedReplayRunID))
+			fmt.Fprintf(&b, "**Targeted replay:** %s (run %s)\n", replayStatus, decision.TargetedReplayRunID)
 		}
 	}
-	b.WriteString(fmt.Sprintf("**Changes:** %s\n", decision.ChangesSummary))
-	b.WriteString(fmt.Sprintf("**Reasoning:** %s\n", decision.Reasoning))
+	fmt.Fprintf(&b, "**Changes:** %s\n", decision.ChangesSummary)
+	fmt.Fprintf(&b, "**Reasoning:** %s\n", decision.Reasoning)
 	if decision.FailureAnalysis != "" {
-		b.WriteString(fmt.Sprintf("**Failures:** %s\n", decision.FailureAnalysis))
+		fmt.Fprintf(&b, "**Failures:** %s\n", decision.FailureAnalysis)
 	}
 	if decision.UXRecommendations != "" {
-		b.WriteString(fmt.Sprintf("**UX recommendations:** %s\n", decision.UXRecommendations))
+		fmt.Fprintf(&b, "**UX recommendations:** %s\n", decision.UXRecommendations)
 	}
 
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
@@ -154,7 +154,7 @@ func AppendToolingRecommendations(workdir string, recommendations []string) erro
 	b.WriteString("## Conctl Improvement Recommendations\n")
 	b.WriteString("Consolidated from agent feedback across this session's iterations.\n\n")
 	for i, rec := range recommendations {
-		b.WriteString(fmt.Sprintf("%d. %s\n", i+1, rec))
+		fmt.Fprintf(&b, "%d. %s\n", i+1, rec)
 	}
 
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
@@ -229,7 +229,7 @@ func ReadMemoryTruncated(workdir string, maxLines int) (string, error) {
 		b.WriteString(line)
 		b.WriteString("\n")
 	}
-	b.WriteString(fmt.Sprintf("\n[... %d earlier lines truncated ...]\n", truncated))
+	fmt.Fprintf(&b, "\n[... %d earlier lines truncated ...]\n", truncated)
 	b.WriteString(strings.Join(tail, "\n"))
 
 	return b.String(), nil

@@ -146,11 +146,11 @@ func BuildIterationSystemPrompt(cfg *Config) string {
 func BuildIterationPrompt(cfg *Config, state *State, lock *MatrixLock, memory string) string {
 	var b strings.Builder
 
-	b.WriteString(fmt.Sprintf("## Iteration %d of %d\n\n", state.Iteration+1, state.MaxIterations))
+	fmt.Fprintf(&b, "## Iteration %d of %d\n\n", state.Iteration+1, state.MaxIterations)
 
 	b.WriteString("### Objective\n")
-	b.WriteString(fmt.Sprintf("Improve accuracy of %s on %s (%s split)\n\n",
-		strings.Join(lock.WorkflowOrder, ", "), lock.Benchmark, lock.Split))
+	fmt.Fprintf(&b, "Improve accuracy of %s on %s (%s split)\n\n",
+		strings.Join(lock.WorkflowOrder, ", "), lock.Benchmark, lock.Split)
 
 	b.WriteString("### Target Workflows (you may modify all of these)\n")
 	for _, wf := range lock.TargetWorkflows {
@@ -161,19 +161,19 @@ func BuildIterationPrompt(cfg *Config, state *State, lock *MatrixLock, memory st
 				break
 			}
 		}
-		b.WriteString(fmt.Sprintf("- %s (%s)\n", wf, role))
+		fmt.Fprintf(&b, "- %s (%s)\n", wf, role)
 	}
 
 	b.WriteString("\n### Current Baseline\n")
 	if state.CurrentRunID != "" {
-		b.WriteString(fmt.Sprintf("- Accuracy: %.1f%%\n", state.CurrentAccuracy*100))
-		b.WriteString(fmt.Sprintf("- Parse rate: %.0f%%\n", state.CurrentParseRate*100))
-		b.WriteString(fmt.Sprintf("- Cost/item: $%.4f\n", state.CurrentCostPerItem))
+		fmt.Fprintf(&b, "- Accuracy: %.1f%%\n", state.CurrentAccuracy*100)
+		fmt.Fprintf(&b, "- Parse rate: %.0f%%\n", state.CurrentParseRate*100)
+		fmt.Fprintf(&b, "- Cost/item: $%.4f\n", state.CurrentCostPerItem)
 		if state.CurrentAvgLatencyMS > 0 {
-			b.WriteString(fmt.Sprintf("- Avg latency: %.0fms (p95: %.0fms)\n", state.CurrentAvgLatencyMS, state.CurrentP95LatencyMS))
+			fmt.Fprintf(&b, "- Avg latency: %.0fms (p95: %.0fms)\n", state.CurrentAvgLatencyMS, state.CurrentP95LatencyMS)
 		}
-		b.WriteString(fmt.Sprintf("- Failed items: %d\n", state.CurrentFailedItems))
-		b.WriteString(fmt.Sprintf("- Run ID: %s\n", state.CurrentRunID))
+		fmt.Fprintf(&b, "- Failed items: %d\n", state.CurrentFailedItems)
+		fmt.Fprintf(&b, "- Run ID: %s\n", state.CurrentRunID)
 	} else {
 		b.WriteString("- No baseline yet (this is the bootstrap iteration)\n")
 		b.WriteString("- Run a benchmark and report results. No comparison needed.\n")
@@ -181,21 +181,21 @@ func BuildIterationPrompt(cfg *Config, state *State, lock *MatrixLock, memory st
 
 	b.WriteString("\n### Budget\n")
 	if cfg.AgentBudgetUSD > 0 {
-		b.WriteString(fmt.Sprintf("- Agent session budget: $%.2f\n", cfg.AgentBudgetUSD))
+		fmt.Fprintf(&b, "- Agent session budget: $%.2f\n", cfg.AgentBudgetUSD)
 	} else {
 		b.WriteString("- Agent session budget: unlimited\n")
 	}
 	if cfg.TotalBudgetUSD > 0 {
 		totalSpent := state.TotalAgentCostUSD + state.TotalBenchCostUSD
 		remainingBudget := cfg.TotalBudgetUSD - totalSpent
-		b.WriteString(fmt.Sprintf("- Total budget remaining: ~$%.2f\n", remainingBudget))
-		b.WriteString(fmt.Sprintf("- Spend so far: $%.2f (agent $%.2f + benchmark $%.2f)\n", totalSpent, state.TotalAgentCostUSD, state.TotalBenchCostUSD))
+		fmt.Fprintf(&b, "- Total budget remaining: ~$%.2f\n", remainingBudget)
+		fmt.Fprintf(&b, "- Spend so far: $%.2f (agent $%.2f + benchmark $%.2f)\n", totalSpent, state.TotalAgentCostUSD, state.TotalBenchCostUSD)
 	} else {
 		b.WriteString("- Total budget: unlimited\n")
 	}
-	b.WriteString(fmt.Sprintf("- Iteration: %d/%d\n", state.Iteration+1, state.MaxIterations))
+	fmt.Fprintf(&b, "- Iteration: %d/%d\n", state.Iteration+1, state.MaxIterations)
 	if state.PlateauCount > 0 {
-		b.WriteString(fmt.Sprintf("- Consecutive no-progress: %d/%d\n", state.PlateauCount, cfg.StopAfterPlateau))
+		fmt.Fprintf(&b, "- Consecutive no-progress: %d/%d\n", state.PlateauCount, cfg.StopAfterPlateau)
 	}
 
 	b.WriteString("\n### Frozen Matrix\n")
@@ -206,33 +206,33 @@ func BuildIterationPrompt(cfg *Config, state *State, lock *MatrixLock, memory st
 
 	b.WriteString("\n### Benchmark Command Template\n")
 	if cfg.AllowModelSwaps {
-		b.WriteString(fmt.Sprintf("Model hints: `%s`\n", conctlInvocation(cfg.Workdir, "benchmarks models suggest --top 10")))
+		fmt.Fprintf(&b, "Model hints: `%s`\n", conctlInvocation(cfg.Workdir, "benchmarks models suggest --top 10"))
 	} else {
 		b.WriteString("Model hints: disabled for this run (`--allow-model-swaps=false`)\n")
 	}
 	if state.CurrentRunID != "" {
-		b.WriteString(fmt.Sprintf("Targeted replay (1 item): `%s`\n", conctlInvocation(cfg.Workdir,
-			fmt.Sprintf("benchmarks replay-items --yes --id %s --items <item-id> --changed-workflows <changed-workflow-ids> --mode required --concurrency 1", state.CurrentRunID))))
+		fmt.Fprintf(&b, "Targeted replay (1 item): `%s`\n", conctlInvocation(cfg.Workdir,
+			fmt.Sprintf("benchmarks replay-items --yes --id %s --items <item-id> --changed-workflows <changed-workflow-ids> --mode required --concurrency 1", state.CurrentRunID)))
 	}
 	splitArg := ""
 	if strings.EqualFold(lock.RunSet, "custom") {
 		splitArg = fmt.Sprintf(" --split %s", lock.Split)
 	}
-	b.WriteString(fmt.Sprintf("Sanity: `%s`\n", conctlInvocation(cfg.Workdir,
+	fmt.Fprintf(&b, "Sanity: `%s`\n", conctlInvocation(cfg.Workdir,
 		fmt.Sprintf("benchmarks run --yes --source benchloop --benchmarks %s --workflows %s --run-set %s%s --limit 5 --concurrency 2",
-			lock.Benchmark, strings.Join(lock.WorkflowOrder, ","), lock.RunSet, splitArg))))
+			lock.Benchmark, strings.Join(lock.WorkflowOrder, ","), lock.RunSet, splitArg)))
 	runLabel := "Small set"
 	if lock.ItemLimit == 0 {
 		runLabel = "Full split"
 	}
-	b.WriteString(fmt.Sprintf("%s: `%s`\n", runLabel, conctlInvocation(cfg.Workdir,
+	fmt.Fprintf(&b, "%s: `%s`\n", runLabel, conctlInvocation(cfg.Workdir,
 		fmt.Sprintf("benchmarks run --yes --source benchloop --benchmarks %s --workflows %s --run-set %s%s --limit %d --concurrency %d",
-			lock.Benchmark, strings.Join(lock.WorkflowOrder, ","), lock.RunSet, splitArg, lock.ItemLimit, lock.Concurrency))))
-	b.WriteString(fmt.Sprintf("Wait for completion: `%s`\n", conctlInvocation(cfg.Workdir, "benchmarks runner-status --wait-until idle --interval 5s")))
+			lock.Benchmark, strings.Join(lock.WorkflowOrder, ","), lock.RunSet, splitArg, lock.ItemLimit, lock.Concurrency)))
+	fmt.Fprintf(&b, "Wait for completion: `%s`\n", conctlInvocation(cfg.Workdir, "benchmarks runner-status --wait-until idle --interval 5s"))
 
 	if state.CurrentRunID != "" {
-		b.WriteString(fmt.Sprintf("\nCompare with baseline: `%s`\n",
-			conctlInvocation(cfg.Workdir, fmt.Sprintf("benchmarks compare-items --base %s --candidate <your-new-run-id>", state.CurrentRunID))))
+		fmt.Fprintf(&b, "\nCompare with baseline: `%s`\n",
+			conctlInvocation(cfg.Workdir, fmt.Sprintf("benchmarks compare-items --base %s --candidate <your-new-run-id>", state.CurrentRunID)))
 	}
 
 	if memory != "" {

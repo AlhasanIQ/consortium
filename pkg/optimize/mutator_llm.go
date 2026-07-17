@@ -35,36 +35,36 @@ func buildLLMMutationPrompt(currentPrompt string, failures []FailureCase, learni
 	b.WriteString(currentPrompt)
 	b.WriteString("\n\n")
 
-	b.WriteString(fmt.Sprintf("## Benchmark Failures (%d samples)\n", len(failures)))
+	fmt.Fprintf(&b, "## Benchmark Failures (%d samples)\n", len(failures))
 	categoryCounts := countFailureCategories(failures)
 	for _, fc := range failures {
 		category := coalesceString(strings.TrimSpace(fc.Category), "uncategorized")
-		b.WriteString(fmt.Sprintf("- Item %s: expected %q, predicted %q\n", fc.ItemID, fc.CorrectAnswer, fc.Predicted))
+		fmt.Fprintf(&b, "- Item %s: expected %q, predicted %q\n", fc.ItemID, fc.CorrectAnswer, fc.Predicted)
 		if child := strings.TrimSpace(fc.ChildPredicted); child != "" {
-			b.WriteString(fmt.Sprintf("  Child predicted: %q\n", child))
+			fmt.Fprintf(&b, "  Child predicted: %q\n", child)
 		}
 		if question := trimForPrompt(fc.Question, 500); question != "" {
-			b.WriteString(fmt.Sprintf("  Question excerpt: %s\n", question))
+			fmt.Fprintf(&b, "  Question excerpt: %s\n", question)
 		}
 		if fc.FailureReason != "" || category != "" {
-			b.WriteString(fmt.Sprintf("  Failure: %s | Category: %s\n", fc.FailureReason, category))
+			fmt.Fprintf(&b, "  Failure: %s | Category: %s\n", fc.FailureReason, category)
 		}
 		if votes := summarizeAgentAnswers(fc.AgentAnswers, 6); votes != "" {
-			b.WriteString(fmt.Sprintf("  Agent votes (model:answer:mark): %s\n", votes))
+			fmt.Fprintf(&b, "  Agent votes (model:answer:mark): %s\n", votes)
 		}
 		if diagnosis := strings.TrimSpace(fc.Diagnosis); diagnosis != "" {
-			b.WriteString(fmt.Sprintf("  Diagnosis hint: %s\n", trimForPrompt(diagnosis, 280)))
+			fmt.Fprintf(&b, "  Diagnosis hint: %s\n", trimForPrompt(diagnosis, 280))
 		}
 		if fc.Flagged {
 			if reason := strings.TrimSpace(fc.FlagReason); reason != "" {
-				b.WriteString(fmt.Sprintf("  Flagged dataset item: %s\n", trimForPrompt(reason, 180)))
+				fmt.Fprintf(&b, "  Flagged dataset item: %s\n", trimForPrompt(reason, 180))
 			} else {
 				b.WriteString("  Flagged dataset item\n")
 			}
 		}
 		if text := strings.TrimSpace(fc.RawOutput); text != "" {
 			text = trimForPrompt(text, 500)
-			b.WriteString(fmt.Sprintf("  Raw output excerpt: %s\n", text))
+			fmt.Fprintf(&b, "  Raw output excerpt: %s\n", text)
 		}
 		if traces := formatNodeTraces(fc.NodeTraces); traces != "" {
 			b.WriteString(traces)
@@ -83,12 +83,12 @@ func buildLLMMutationPrompt(currentPrompt string, failures []FailureCase, learni
 	primaryWeight := objectiveWeight(spec, "accuracy")
 	costWeight := objectiveWeight(spec, "cost_per_item")
 	b.WriteString("## Optimization Objectives\n")
-	b.WriteString(fmt.Sprintf("Primary: maximize accuracy (weight %.2f)\n", primaryWeight))
-	b.WriteString(fmt.Sprintf("Secondary: minimize cost_per_item (weight %.2f)\n", costWeight))
+	fmt.Fprintf(&b, "Primary: maximize accuracy (weight %.2f)\n", primaryWeight)
+	fmt.Fprintf(&b, "Secondary: minimize cost_per_item (weight %.2f)\n", costWeight)
 	if spec != nil && len(spec.Constraints) > 0 {
 		b.WriteString("Constraints:\n")
 		for _, c := range spec.Constraints {
-			b.WriteString(fmt.Sprintf("- %s %s %.4f\n", c.Metric, c.Op, c.Value))
+			fmt.Fprintf(&b, "- %s %s %.4f\n", c.Metric, c.Op, c.Value)
 		}
 	}
 	b.WriteString("\n")
@@ -117,11 +117,11 @@ func formatNodeTraces(traces []FailureNodeTrace) string {
 	var b strings.Builder
 	b.WriteString("  Execution trace:\n")
 	for _, t := range traces {
-		b.WriteString(fmt.Sprintf("    [%s]", t.NodeID))
+		fmt.Fprintf(&b, "    [%s]", t.NodeID)
 		if t.Model != "" {
-			b.WriteString(fmt.Sprintf(" model=%s", t.Model))
+			fmt.Fprintf(&b, " model=%s", t.Model)
 		}
-		b.WriteString(fmt.Sprintf(": %s\n", trimForPrompt(t.Output, 200)))
+		fmt.Fprintf(&b, ": %s\n", trimForPrompt(t.Output, 200))
 	}
 	return b.String()
 }

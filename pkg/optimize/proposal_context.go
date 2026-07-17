@@ -77,10 +77,10 @@ func formatProposalContextSection(pc *ProposalContext) string {
 	}
 
 	if len(pc.SuccessExamples) > 0 {
-		b.WriteString(fmt.Sprintf("## Successful Examples (%d samples)\n", len(pc.SuccessExamples)))
+		fmt.Fprintf(&b, "## Successful Examples (%d samples)\n", len(pc.SuccessExamples))
 		b.WriteString("These items were answered correctly — they show what good performance looks like:\n")
 		for _, ex := range pc.SuccessExamples {
-			b.WriteString(fmt.Sprintf("- %s | answer=%q\n", ex.ItemID, ex.CorrectAnswer))
+			fmt.Fprintf(&b, "- %s | answer=%q\n", ex.ItemID, ex.CorrectAnswer)
 			if q := trimForPrompt(ex.Question, 200); q != "" {
 				b.WriteString("  Question: " + q + "\n")
 			}
@@ -92,9 +92,9 @@ func formatProposalContextSection(pc *ProposalContext) string {
 		b.WriteString("## Previous Improving Mutations\n")
 		b.WriteString("These mutations improved fitness — build on what worked:\n")
 		for _, entry := range pc.ImprovingEntries {
-			b.WriteString(fmt.Sprintf("- Gen %d [%s] delta=+%.4f desc=%s\n",
+			fmt.Fprintf(&b, "- Gen %d [%s] delta=+%.4f desc=%s\n",
 				entry.Generation, entry.MutationType, entry.FitnessDelta,
-				trimForPrompt(entry.Description, 160)))
+				trimForPrompt(entry.Description, 160))
 		}
 		b.WriteString("\n")
 	}
@@ -143,9 +143,9 @@ func buildWorkflowDescription(workflowJSON json.RawMessage, componentKey string)
 
 	var b strings.Builder
 	if id, ok := raw["id"].(string); ok && id != "" {
-		b.WriteString(fmt.Sprintf("Workflow: %s", id))
+		fmt.Fprintf(&b, "Workflow: %s", id)
 		if name, ok := raw["name"].(string); ok && name != "" {
-			b.WriteString(fmt.Sprintf(" (%s)", name))
+			fmt.Fprintf(&b, " (%s)", name)
 		}
 		b.WriteString("\n")
 	}
@@ -155,7 +155,7 @@ func buildWorkflowDescription(workflowJSON json.RawMessage, componentKey string)
 		return b.String()
 	}
 
-	b.WriteString(fmt.Sprintf("Nodes (%d total):\n", len(nodes)))
+	fmt.Fprintf(&b, "Nodes (%d total):\n", len(nodes))
 	for _, n := range nodes {
 		node, ok := n.(map[string]interface{})
 		if !ok {
@@ -186,7 +186,7 @@ func buildWorkflowDescription(workflowJSON json.RawMessage, componentKey string)
 		b.WriteString(desc + "\n")
 	}
 	if componentKey != "" {
-		b.WriteString(fmt.Sprintf("(* = node being optimized: %s)\n", componentKey))
+		fmt.Fprintf(&b, "(* = node being optimized: %s)\n", componentKey)
 	}
 	return b.String()
 }
@@ -202,8 +202,8 @@ func buildDatasetSummary(failures []FailureCase, successes []SuccessExample) str
 	}
 
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("Dataset sample: %d items observed (%d failures, %d successes).\n",
-		totalSamples, len(failures), len(successes)))
+	fmt.Fprintf(&b, "Dataset sample: %d items observed (%d failures, %d successes).\n",
+		totalSamples, len(failures), len(successes))
 
 	// Compute category distribution
 	categories := map[string]int{}
@@ -244,7 +244,7 @@ func buildDatasetSummary(failures []FailureCase, successes []SuccessExample) str
 		} else if avgLen > 200 {
 			complexity = "medium-length"
 		}
-		b.WriteString(fmt.Sprintf("Questions are typically %s (avg ~%d chars).\n", complexity, avgLen))
+		fmt.Fprintf(&b, "Questions are typically %s (avg ~%d chars).\n", complexity, avgLen)
 	}
 
 	return strings.TrimSpace(b.String())

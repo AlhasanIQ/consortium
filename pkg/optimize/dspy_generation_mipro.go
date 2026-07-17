@@ -584,7 +584,7 @@ func miproSelectionKey(selection map[string]int) string {
 	for _, key := range keys {
 		b.WriteString(key)
 		b.WriteString("=")
-		b.WriteString(fmt.Sprintf("%d", selection[key]))
+		fmt.Fprintf(&b, "%d", selection[key])
 		b.WriteString(";")
 	}
 	return b.String()

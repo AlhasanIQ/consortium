@@ -58,13 +58,13 @@ func formatDemoSection(demos []DemoExample) string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("\n\n## Few-Shot Examples (%d)\n", len(demos)))
+	fmt.Fprintf(&b, "\n\n## Few-Shot Examples (%d)\n", len(demos))
 	b.WriteString("The following are examples of correct answers:\n\n")
 	for i, demo := range demos {
 		q := trimForPrompt(demo.Question, 400)
-		b.WriteString(fmt.Sprintf("Example %d:\n", i+1))
-		b.WriteString(fmt.Sprintf("Q: %s\n", q))
-		b.WriteString(fmt.Sprintf("A: %s\n\n", demo.Answer))
+		fmt.Fprintf(&b, "Example %d:\n", i+1)
+		fmt.Fprintf(&b, "Q: %s\n", q)
+		fmt.Fprintf(&b, "A: %s\n\n", demo.Answer)
 	}
 	return b.String()
 }

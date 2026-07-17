@@ -126,7 +126,7 @@ func (s *ScoringAggregator) Aggregate(ctx context.Context, inputs []AgentOutput,
 	// Build rubric section
 	var rubricBuilder strings.Builder
 	for _, criterion := range rubric {
-		rubricBuilder.WriteString(fmt.Sprintf("- %s (%.0f%%): %s\n", normalizeRubricKey(criterion.Name), criterion.Weight*100, criterion.Description))
+		fmt.Fprintf(&rubricBuilder, "- %s (%.0f%%): %s\n", normalizeRubricKey(criterion.Name), criterion.Weight*100, criterion.Description)
 	}
 	rubricText := rubricBuilder.String()
 
@@ -202,9 +202,9 @@ func (s *ScoringAggregator) Aggregate(ctx context.Context, inputs []AgentOutput,
 		scores[input.AgentID] = weightedScore
 
 		if attemptNo > 1 {
-			reasoningBuilder.WriteString(fmt.Sprintf("(%s scoring call retries: %d)\n", input.AgentID, attemptNo-1))
+			fmt.Fprintf(&reasoningBuilder, "(%s scoring call retries: %d)\n", input.AgentID, attemptNo-1)
 		}
-		reasoningBuilder.WriteString(fmt.Sprintf("### %s (Score: %.2f)\n%s\n\n", input.AgentID, weightedScore, resp.Content))
+		fmt.Fprintf(&reasoningBuilder, "### %s (Score: %.2f)\n%s\n\n", input.AgentID, weightedScore, resp.Content)
 	}
 
 	// If ALL scores failed to parse, return an error rather than picking a fake winner
@@ -214,7 +214,7 @@ func (s *ScoringAggregator) Aggregate(ctx context.Context, inputs []AgentOutput,
 
 	// Note parse failures in reasoning if some (but not all) failed
 	if parseFailures > 0 {
-		reasoningBuilder.WriteString(fmt.Sprintf("**Warning:** %d of %d score evaluations failed to parse (scored 0.0)\n\n", parseFailures, len(inputs)))
+		fmt.Fprintf(&reasoningBuilder, "**Warning:** %d of %d score evaluations failed to parse (scored 0.0)\n\n", parseFailures, len(inputs))
 	}
 
 	// Find the winner (highest score, with alphabetical tie-breaking for determinism)

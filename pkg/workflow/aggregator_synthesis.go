@@ -83,7 +83,7 @@ func (s *SynthesisAggregator) Aggregate(ctx context.Context, inputs []AgentOutpu
 	var responsesBuilder strings.Builder
 	for _, input := range inputs {
 		label := anonMap.IDToLabel[input.AgentID]
-		responsesBuilder.WriteString(fmt.Sprintf("### Response %s:\n%s\n\n", label, input.Output))
+		fmt.Fprintf(&responsesBuilder, "### Response %s:\n%s\n\n", label, input.Output)
 	}
 
 	// Build the final user prompt

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -121,13 +122,120 @@ func retryHistoryBatch(ctx context.Context, attempt func() (bool, error)) error 
 }
 
 func (s *Storage) appendHistoryEventBatchOnce(ctx context.Context, events []*HistoryEvent) (bool, error) {
+	const maxSingleStatementBatchSize = 400
+	if len(events) > maxSingleStatementBatchSize {
+		return s.appendHistoryEventBatchTransaction(ctx, events)
+	}
+	if events[0] == nil {
+		return false, fmt.Errorf("history batch event 0 is nil")
+	}
+	runID := events[0].RunID
+	var query strings.Builder
+	query.Grow(256 + len(events)*128)
+	query.WriteString(`
+		WITH next_sequence AS (
+			SELECT COALESCE(MAX(sequence), 0) AS base
+			FROM execution_history
+			WHERE run_id = ?
+		)
+		INSERT INTO execution_history
+			(run_id, sequence, event_type, node_id, activity_id, timestamp, attributes, created_at)
+	`)
+	args := make([]interface{}, 0, 1+len(events)*8)
+	args = append(args, runID)
+
+	for i, event := range events {
+		if event == nil {
+			return false, fmt.Errorf("history batch event %d is nil", i)
+		}
+		if event.RunID != runID {
+			return false, fmt.Errorf("history batch contains multiple run IDs: %q and %q", runID, event.RunID)
+		}
+
+		attrsJSON := "{}"
+		if event.Attributes != nil {
+			data, marshalErr := json.Marshal(event.Attributes)
+			if marshalErr != nil {
+				return false, fmt.Errorf("failed to marshal attributes: %w", marshalErr)
+			}
+			attrsJSON = string(data)
+		}
+
+		var nodeID, activityID interface{}
+		if event.NodeID != "" {
+			nodeID = event.NodeID
+		}
+		if event.ActivityID != "" {
+			activityID = event.ActivityID
+		}
+
+		now := time.Now()
+		if event.Timestamp.IsZero() {
+			event.Timestamp = now
+		}
+
+		if i > 0 {
+			query.WriteString(" UNION ALL ")
+		}
+		query.WriteString("SELECT ?, base + ?, ?, ?, ?, ?, ?, ? FROM next_sequence")
+		args = append(args,
+			event.RunID, i+1, string(event.Type), nodeID, activityID,
+			event.Timestamp, attrsJSON, now,
+		)
+	}
+	query.WriteString(" RETURNING sequence")
+
+	rows, err := s.db.QueryContext(ctx, query.String(), args...)
+	if err != nil {
+		retryable := IsRetryableSQLiteError(err) || isUniqueConstraintError(err)
+		return retryable, fmt.Errorf("failed to insert history batch: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var firstSequence int64
+	count := 0
+	for rows.Next() {
+		var sequence int64
+		if err := rows.Scan(&sequence); err != nil {
+			return false, fmt.Errorf("failed to scan inserted history sequence: %w", err)
+		}
+		if count == 0 || sequence < firstSequence {
+			firstSequence = sequence
+		}
+		count++
+	}
+	if err := rows.Err(); err != nil {
+		return IsRetryableSQLiteError(err), fmt.Errorf("failed to insert history batch: %w", err)
+	}
+	if count != len(events) {
+		return false, fmt.Errorf("inserted %d history events, expected %d", count, len(events))
+	}
+	for i, event := range events {
+		event.Sequence = firstSequence + int64(i)
+	}
+
+	return false, nil
+}
+
+func (s *Storage) appendHistoryEventBatchTransaction(ctx context.Context, events []*HistoryEvent) (bool, error) {
+	if events[0] == nil {
+		return false, fmt.Errorf("history batch event 0 is nil")
+	}
+	runID := events[0].RunID
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return IsRetryableSQLiteError(err), fmt.Errorf("failed to begin batch history tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	for _, event := range events {
+	for i, event := range events {
+		if event == nil {
+			return false, fmt.Errorf("history batch event %d is nil", i)
+		}
+		if event.RunID != runID {
+			return false, fmt.Errorf("history batch contains multiple run IDs: %q and %q", runID, event.RunID)
+		}
+
 		attrsJSON := "{}"
 		if event.Attributes != nil {
 			data, marshalErr := json.Marshal(event.Attributes)
@@ -158,12 +266,13 @@ func (s *Storage) appendHistoryEventBatchOnce(ctx context.Context, events []*His
 			RETURNING sequence
 		`, event.RunID, string(event.Type), nodeID, activityID, event.Timestamp, attrsJSON, now, event.RunID).Scan(&event.Sequence)
 		if err != nil {
-			return IsRetryableSQLiteError(err) || isUniqueConstraintError(err), fmt.Errorf("failed to insert batch history event: %w", err)
+			retryable := IsRetryableSQLiteError(err) || isUniqueConstraintError(err)
+			return retryable, fmt.Errorf("failed to insert batch history event: %w", err)
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		return false, fmt.Errorf("failed to commit batch history tx: %w", err)
+		return IsRetryableSQLiteError(err), fmt.Errorf("failed to commit batch history tx: %w", err)
 	}
 	return false, nil
 }

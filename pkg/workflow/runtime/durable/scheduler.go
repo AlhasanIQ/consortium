@@ -39,6 +39,121 @@ type SchedulerState struct {
 	WorkflowContext   map[string]interface{} `json:"workflow_context,omitempty"`
 }
 
+// readyQueue incrementally tracks runnable nodes for one execution. SchedulerState
+// remains the durable source of truth; this queue is a derived, in-memory index
+// that avoids rescanning every node after each completed DAG level.
+type readyQueue struct {
+	state         *SchedulerState
+	flatDeps      map[string][]string
+	dependents    map[string][]string
+	remainingDeps map[string]int
+	ready         []string
+	next          []string
+}
+
+func newReadyQueue(state *SchedulerState, deps map[string][]string, nodeIDs []string) *readyQueue {
+	hasDependencies := false
+	for _, nodeID := range nodeIDs {
+		if len(deps[nodeID]) > 0 {
+			hasDependencies = true
+			break
+		}
+	}
+	if !hasDependencies {
+		return &readyQueue{state: state, flatDeps: deps}
+	}
+
+	q := &readyQueue{
+		state: state,
+		ready: make([]string, 0, len(nodeIDs)),
+		next:  make([]string, 0, len(nodeIDs)),
+	}
+	if state == nil {
+		return q
+	}
+
+	for _, nodeID := range nodeIDs {
+		remaining := 0
+		for _, dep := range deps[nodeID] {
+			if q.dependents == nil {
+				q.dependents = make(map[string][]string)
+			}
+			q.dependents[dep] = append(q.dependents[dep], nodeID)
+			if state.Nodes[dep] != NodeStateCompleted {
+				remaining++
+			}
+		}
+		if remaining > 0 {
+			if q.remainingDeps == nil {
+				q.remainingDeps = make(map[string]int)
+			}
+			q.remainingDeps[nodeID] = remaining
+		}
+		if state.Nodes[nodeID] == NodeStatePending && remaining == 0 {
+			q.ready = append(q.ready, nodeID)
+		}
+	}
+	sort.Strings(q.ready)
+
+	return q
+}
+
+// ReadySet returns currently runnable nodes in deterministic order. Before
+// returning, it advances dependencies for nodes from the previous ready set
+// that reached completion. Retried nodes remain pending and therefore ready.
+func (q *readyQueue) ReadySet() []string {
+	if q == nil || q.state == nil || q.state.IsTerminal() {
+		return nil
+	}
+	if q.flatDeps != nil {
+		return q.state.ReadySet(q.flatDeps)
+	}
+
+	next := q.next[:0]
+	for _, nodeID := range q.ready {
+		switch q.state.Nodes[nodeID] {
+		case NodeStateCompleted:
+			for _, dependent := range q.dependents[nodeID] {
+				remaining := q.remainingDeps[dependent]
+				if remaining > 0 {
+					remaining--
+					q.remainingDeps[dependent] = remaining
+				}
+				if remaining == 0 && q.state.Nodes[dependent] == NodeStatePending {
+					next = append(next, dependent)
+				}
+			}
+		case NodeStatePending:
+			next = append(next, nodeID)
+		case NodeStateScheduled, NodeStateRunning:
+			// Keep tracking in-flight nodes so a defensive ReadySet call before
+			// dispatch completion cannot lose their eventual dependency updates.
+			next = append(next, nodeID)
+		}
+	}
+	q.ready, q.next = next, q.ready[:0]
+	sort.Strings(q.ready)
+
+	allPending := true
+	for _, nodeID := range q.ready {
+		if q.state.Nodes[nodeID] != NodeStatePending {
+			allPending = false
+			break
+		}
+	}
+	if allPending {
+		return q.ready
+	}
+
+	ready := make([]string, 0, len(q.ready))
+	for _, nodeID := range q.ready {
+		if q.state.Nodes[nodeID] == NodeStatePending {
+			ready = append(ready, nodeID)
+		}
+	}
+	return ready
+}
+
 // NewSchedulerState creates a fresh scheduler state with all nodes pending.
 func NewSchedulerState(nodeIDs []string) *SchedulerState {
 	s := &SchedulerState{

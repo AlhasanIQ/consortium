@@ -228,10 +228,18 @@ Durable execution engine. All production execution routes through this runtime.
 
 - Event-sourced: `execution_history` table records all state transitions
 - Idempotent: `activity_results` table prevents duplicate work on replay
-- Deterministic scheduling: `ReadySet(deps)` returns topologically sorted ready nodes
+- Deterministic scheduling: replay reconstructs `SchedulerState`, while an incremental ready frontier advances completed dependencies without rescanning the full DAG after every level
 - Targeted replay seeding: fresh runs can preload selected upstream nodes as completed from a prior run (`ReplayRequest`), then execute only dirty/downstream nodes. Seeded nodes record zero cost/tokens (original values preserved in history as `seed_*` attributes)
 - Replay plan builder: `pkg/workflow/runtime/BuildReplayPlan` compares baseline vs candidate frozen DAGs and computes `reuse_node_ids` / `execute_node_ids`
 - `NodeRunnerAdapter` wraps existing `NodeRunner` implementations as `ActivityHandler`
+
+Engine overhead benchmarks are separate from model-quality benchmarks and HTTP load tests:
+
+```bash
+make bench-engine
+```
+
+They cover durable history writes, replay, deep and wide scheduler shapes, and sequential/parallel no-op workflows. Use `/tmp` for CPU, allocation, mutex, and block profiles so generated profile artifacts are not committed.
 
 ### Executor ([pkg/workflow/executor.go](pkg/workflow/executor.go))
 

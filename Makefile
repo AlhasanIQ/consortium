@@ -1,6 +1,6 @@
 WORKTREE_DIR ?= $(shell cd "$(dir $(abspath $(lastword $(MAKEFILE_LIST))))" && git worktree list --porcelain | head -1 | sed 's/^worktree //')/../consortium-worktrees
 
-.PHONY: help build test clean dev backend backend-bg backend-stop backend-restart backend-status backend-logs restart frontend frontend-install frontend-bg frontend-stop frontend-restart frontend-status frontend-logs worktree-add worktree-setup install-hooks lint-frontend fix-frontend typecheck fetch-openrouter-models loadtest loadtest-heavy bench-data ci ci-backend ci-frontend fmt lint tidy install-tools db-query db-reset build-frontend frontend-precompress build-release release-audit conctl-build conctl conctl-completion benchloop-build benchloop
+.PHONY: help build test clean dev backend backend-bg backend-stop backend-restart backend-status backend-logs restart frontend frontend-install frontend-bg frontend-stop frontend-restart frontend-status frontend-logs worktree-add worktree-setup install-hooks lint-frontend fix-frontend typecheck fetch-openrouter-models loadtest loadtest-heavy bench-engine bench-data ci ci-backend ci-frontend fmt lint tidy install-tools db-query db-reset build-frontend frontend-precompress build-release release-audit conctl-build conctl conctl-completion benchloop-build benchloop
 
 BINDIR ?= bin
 GOLANGCI_LINT_VERSION ?= v2.12.2
@@ -10,6 +10,8 @@ CONCTL_BIN := $(BINDIR)/conctl
 BENCHLOOP_BIN := $(BINDIR)/benchloop
 BUN ?= $(shell command -v bun 2>/dev/null || echo "$(HOME)/.bun/bin/bun")
 PYTHON ?= python3
+ENGINE_BENCHTIME ?= 1s
+ENGINE_BENCH_COUNT ?= 5
 WORKTREE_PROFILE ?= $(shell ./scripts/dev-env-value.sh WORKTREE_PROFILE default 2>/dev/null)
 PORT ?= $(shell ./scripts/dev-env-value.sh PORT 8080 2>/dev/null)
 FRONTEND_PORT ?= $(shell ./scripts/dev-env-value.sh FRONTEND_PORT 3000 2>/dev/null)
@@ -194,6 +196,11 @@ loadtest:
 ## loadtest-heavy: Run intensive load test (50 workers, 60s)
 loadtest-heavy:
 	go run ./cmd/loadtest -concurrency=50 -duration=60s -scenario=mixed -verbose
+
+## bench-engine: Benchmark durable scheduling, persistence, and no-op workflow overhead
+bench-engine:
+	go test ./pkg/storage -run '^$$' -bench '^BenchmarkAppendHistory' -benchmem -benchtime=$(ENGINE_BENCHTIME) -count=$(ENGINE_BENCH_COUNT)
+	go test ./pkg/workflow/runtime/durable -run '^$$' -bench '^(BenchmarkDAGRuntime|BenchmarkScheduler)' -benchmem -benchtime=$(ENGINE_BENCHTIME) -count=$(ENGINE_BENCH_COUNT)
 
 ## benchloop-build: Build benchloop binary
 benchloop-build:

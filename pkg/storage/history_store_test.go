@@ -343,6 +343,140 @@ func TestAppendHistoryEventBatch_RollsBackOnLaterEventFailure(t *testing.T) {
 	}
 }
 
+func TestAppendHistoryEventBatch_RejectsMixedRunsWithoutWriting(t *testing.T) {
+	store, err := NewStorage(":memory:")
+	if err != nil {
+		t.Fatalf("new storage failed: %v", err)
+	}
+	defer store.Close()
+
+	events := []*HistoryEvent{
+		{RunID: "run-a", Type: "workflow_started"},
+		{RunID: "run-b", Type: "workflow_started"},
+	}
+	if err := store.AppendHistoryEventBatch(context.Background(), events); err == nil {
+		t.Fatal("AppendHistoryEventBatch accepted events from different runs")
+	}
+
+	for _, runID := range []string{"run-a", "run-b"} {
+		stored, err := store.GetHistoryEvents(context.Background(), runID)
+		if err != nil {
+			t.Fatalf("GetHistoryEvents(%q): %v", runID, err)
+		}
+		if len(stored) != 0 {
+			t.Fatalf("failed mixed-run batch wrote %d event(s) for %s", len(stored), runID)
+		}
+	}
+}
+
+func TestAppendHistoryEventBatch_ConcurrentSameRunRemainsAtomic(t *testing.T) {
+	store, err := NewStorage(t.TempDir() + "/history-batch.db")
+	if err != nil {
+		t.Fatalf("new storage failed: %v", err)
+	}
+	defer store.Close()
+
+	const workers = 20
+	const eventsPerBatch = 2
+	const runID = "concurrent-batch-run"
+	ctx := context.Background()
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(worker int) {
+			defer wg.Done()
+			events := []*HistoryEvent{
+				{RunID: runID, Type: "activity_started", NodeID: fmt.Sprintf("node-%d", worker)},
+				{RunID: runID, Type: "activity_completed", NodeID: fmt.Sprintf("node-%d", worker)},
+			}
+			if err := store.AppendHistoryEventBatch(ctx, events); err != nil {
+				errCh <- err
+				return
+			}
+			if events[1].Sequence != events[0].Sequence+1 {
+				errCh <- fmt.Errorf("worker %d batch sequences are not consecutive: %d, %d", worker, events[0].Sequence, events[1].Sequence)
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Fatal(err)
+	}
+
+	stored, err := store.GetHistoryEvents(ctx, runID)
+	if err != nil {
+		t.Fatalf("GetHistoryEvents: %v", err)
+	}
+	if len(stored) != workers*eventsPerBatch {
+		t.Fatalf("stored %d events, want %d", len(stored), workers*eventsPerBatch)
+	}
+	for i, event := range stored {
+		want := int64(i + 1)
+		if event.Sequence != want {
+			t.Fatalf("sequence at index %d = %d, want %d", i, event.Sequence, want)
+		}
+	}
+}
+
+func TestAppendHistoryEventBatch_LargeBatchUsesAtomicFallback(t *testing.T) {
+	store, err := NewStorage(":memory:")
+	if err != nil {
+		t.Fatalf("new storage failed: %v", err)
+	}
+	defer store.Close()
+
+	const eventCount = 401
+	events := make([]*HistoryEvent, eventCount)
+	for i := range events {
+		events[i] = &HistoryEvent{RunID: "large-batch-run", Type: "activity_completed", NodeID: fmt.Sprintf("node-%d", i)}
+	}
+	if err := store.AppendHistoryEventBatch(context.Background(), events); err != nil {
+		t.Fatalf("AppendHistoryEventBatch: %v", err)
+	}
+	for i, event := range events {
+		want := int64(i + 1)
+		if event.Sequence != want {
+			t.Fatalf("event %d sequence = %d, want %d", i, event.Sequence, want)
+		}
+	}
+	stored, err := store.GetHistoryEvents(context.Background(), "large-batch-run")
+	if err != nil {
+		t.Fatalf("GetHistoryEvents: %v", err)
+	}
+	if len(stored) != eventCount {
+		t.Fatalf("stored %d events, want %d", len(stored), eventCount)
+	}
+}
+
+func TestAppendHistoryEventBatch_LargeBatchFallbackRollsBack(t *testing.T) {
+	store, err := NewStorage(":memory:")
+	if err != nil {
+		t.Fatalf("new storage failed: %v", err)
+	}
+	defer store.Close()
+
+	const eventCount = 401
+	events := make([]*HistoryEvent, eventCount)
+	for i := range events {
+		events[i] = &HistoryEvent{RunID: "large-rollback-run", Type: "activity_completed"}
+	}
+	events[eventCount-1].Attributes = map[string]interface{}{"invalid": make(chan int)}
+
+	if err := store.AppendHistoryEventBatch(context.Background(), events); err == nil {
+		t.Fatal("AppendHistoryEventBatch accepted an invalid event in the transaction fallback")
+	}
+	stored, err := store.GetHistoryEvents(context.Background(), "large-rollback-run")
+	if err != nil {
+		t.Fatalf("GetHistoryEvents: %v", err)
+	}
+	if len(stored) != 0 {
+		t.Fatalf("failed large batch partially persisted %d event(s)", len(stored))
+	}
+}
+
 func TestRetryHistoryBatch(t *testing.T) {
 	t.Run("retries transient begin transaction errors", func(t *testing.T) {
 		attempts := 0

@@ -94,6 +94,7 @@ func (r *DAGRuntime) Start(ctx context.Context, params *runtime.StartParams) err
 	state := startCtx.state
 	workflowCtx := startCtx.workflowCtx
 	nodeIndex := startCtx.nodeIndex
+	readyQueue := newReadyQueue(state, deps, startCtx.nodeIDs)
 
 	var runtimeErr error
 
@@ -106,7 +107,7 @@ mainLoop:
 		}
 
 		// Compute ready set.
-		ready := state.ReadySet(deps)
+		ready := readyQueue.ReadySet()
 		if len(ready) == 0 {
 			if state.AllNodesTerminal() {
 				break mainLoop

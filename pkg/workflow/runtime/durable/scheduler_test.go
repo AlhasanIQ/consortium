@@ -2,6 +2,9 @@ package durable
 
 import (
 	"encoding/json"
+	"fmt"
+	"math/rand"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -56,6 +59,110 @@ func TestReadySet_LinearWorkflow(t *testing.T) {
 	ready = state.ReadySet(deps)
 	if len(ready) != 0 {
 		t.Errorf("Expected empty, got %v", ready)
+	}
+}
+
+func TestReadyQueue_AdvancesChainIncrementally(t *testing.T) {
+	nodeIDs := []string{"A", "B", "C"}
+	deps := map[string][]string{
+		"A": nil,
+		"B": {"A"},
+		"C": {"B"},
+	}
+	state := NewSchedulerState(nodeIDs)
+	queue := newReadyQueue(state, deps, nodeIDs)
+
+	for _, want := range nodeIDs {
+		ready := queue.ReadySet()
+		if len(ready) != 1 || ready[0] != want {
+			t.Fatalf("ready = %v, want [%s]", ready, want)
+		}
+		state.Nodes[want] = NodeStateCompleted
+	}
+	if ready := queue.ReadySet(); len(ready) != 0 {
+		t.Fatalf("ready after completion = %v, want empty", ready)
+	}
+}
+
+func TestReadyQueue_RetryStaysReady(t *testing.T) {
+	nodeIDs := []string{"A", "B"}
+	deps := map[string][]string{"A": nil, "B": {"A"}}
+	state := NewSchedulerState(nodeIDs)
+	queue := newReadyQueue(state, deps, nodeIDs)
+
+	if ready := queue.ReadySet(); len(ready) != 1 || ready[0] != "A" {
+		t.Fatalf("initial ready = %v, want [A]", ready)
+	}
+	state.Nodes["A"] = NodeStateRunning
+	state.Nodes["A"] = NodeStatePending
+	if ready := queue.ReadySet(); len(ready) != 1 || ready[0] != "A" {
+		t.Fatalf("retry ready = %v, want [A]", ready)
+	}
+	if state.Nodes["B"] != NodeStatePending {
+		t.Fatalf("dependent state = %s, want pending", state.Nodes["B"])
+	}
+}
+
+func TestReadyQueue_InitializesFromReplayedCompletion(t *testing.T) {
+	nodeIDs := []string{"A", "B", "C"}
+	deps := map[string][]string{"A": nil, "B": {"A"}, "C": {"B"}}
+	state := NewSchedulerState(nodeIDs)
+	state.Nodes["A"] = NodeStateCompleted
+	queue := newReadyQueue(state, deps, nodeIDs)
+
+	if ready := queue.ReadySet(); len(ready) != 1 || ready[0] != "B" {
+		t.Fatalf("ready after replay = %v, want [B]", ready)
+	}
+}
+
+func TestReadyQueue_MatchesReadySetAcrossDeterministicRandomDAGs(t *testing.T) {
+	rng := rand.New(rand.NewSource(42))
+
+	for graph := 0; graph < 100; graph++ {
+		nodeCount := 1 + rng.Intn(40)
+		nodeIDs := make([]string, nodeCount)
+		deps := make(map[string][]string, nodeCount)
+		for i := 0; i < nodeCount; i++ {
+			nodeIDs[i] = fmt.Sprintf("node-%02d", i)
+			for predecessor := 0; predecessor < i; predecessor++ {
+				if rng.Intn(7) == 0 {
+					deps[nodeIDs[i]] = append(deps[nodeIDs[i]], nodeIDs[predecessor])
+				}
+			}
+		}
+
+		state := NewSchedulerState(nodeIDs)
+		queue := newReadyQueue(state, deps, nodeIDs)
+		retried := false
+
+		for step := 0; step <= nodeCount; step++ {
+			want := state.ReadySet(deps)
+			got := queue.ReadySet()
+			if !slices.Equal(got, want) {
+				t.Fatalf("graph %d step %d ready = %v, want %v", graph, step, got, want)
+			}
+			if len(got) == 0 {
+				if !state.AllNodesTerminal() {
+					t.Fatalf("graph %d made no progress with non-terminal state: %+v", graph, state.Nodes)
+				}
+				break
+			}
+
+			// Exercise retry semantics once per graph: a pending ready node must
+			// remain ready without advancing any of its dependents.
+			if !retried {
+				retried = true
+				wantRetry := state.ReadySet(deps)
+				gotRetry := queue.ReadySet()
+				if !slices.Equal(gotRetry, wantRetry) {
+					t.Fatalf("graph %d retry ready = %v, want %v", graph, gotRetry, wantRetry)
+				}
+			}
+
+			for _, nodeID := range got {
+				state.Nodes[nodeID] = NodeStateCompleted
+			}
+		}
 	}
 }
 

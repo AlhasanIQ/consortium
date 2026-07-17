@@ -3,6 +3,7 @@ WORKTREE_DIR ?= $(shell cd "$(dir $(abspath $(lastword $(MAKEFILE_LIST))))" && g
 .PHONY: help build test clean dev backend backend-bg backend-stop backend-restart backend-status backend-logs restart frontend frontend-install frontend-bg frontend-stop frontend-restart frontend-status frontend-logs worktree-add worktree-setup install-hooks lint-frontend fix-frontend typecheck fetch-openrouter-models loadtest loadtest-heavy bench-data ci ci-backend ci-frontend fmt lint tidy install-tools db-query db-reset build-frontend frontend-precompress build-release release-audit conctl-build conctl conctl-completion benchloop-build benchloop
 
 BINDIR ?= bin
+GOLANGCI_LINT_VERSION ?= v2.12.2
 SERVER_BIN := $(BINDIR)/consortium
 RELEASE_BIN := $(BINDIR)/consortium-release
 CONCTL_BIN := $(BINDIR)/conctl
@@ -284,8 +285,8 @@ ci-frontend:
 install-tools:
 	@echo "Installing development tools..."
 	go install golang.org/x/tools/cmd/goimports@latest
-	@echo "Installing golangci-lint via binary (recommended method)..."
-	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(shell go env GOPATH)/bin
+	@echo "Installing golangci-lint $(GOLANGCI_LINT_VERSION) via binary..."
+	curl -sSfL https://golangci-lint.run/install.sh | sh -s -- -b $(shell go env GOPATH)/bin $(GOLANGCI_LINT_VERSION)
 	@echo "✅ Tools installed successfully"
 
 ## install-hooks: Install git pre-commit hook

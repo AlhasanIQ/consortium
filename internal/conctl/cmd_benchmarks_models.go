@@ -488,7 +488,7 @@ func fetchBenchmarkModelRows(sourceURL, apiKey string, timeout time.Duration) (m
 
 func fetchBenchmarkModelRowsWithClient(sourceURL, apiKey string, client *http.Client) (map[string]interface{}, []map[string]interface{}, error) {
 	if strings.TrimSpace(apiKey) == "" {
-		return nil, nil, errors.New("Artificial Analysis API key is required")
+		return nil, nil, errors.New("artificial analysis API key is required")
 	}
 	if client == nil {
 		return nil, nil, errors.New("source HTTP client is required")

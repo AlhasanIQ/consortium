@@ -47,12 +47,23 @@ func (j *JudgeAggregator) Aggregate(ctx context.Context, inputs []AgentOutput, c
 		return single.Result, nil
 	}
 
-	// Optional fast path: if all agents produced the same extractable answer,
-	// skip judge LLM calls entirely.
-	if decision, ok := maybeUnanimousAnswerDecision(inputs, config); ok {
+	// Validate adaptive fast-path knobs even if consensus is not reached. A typo
+	// should fail closed instead of silently spending money on an unexpected judge call.
+	if _, _, err := parseConsensusShortCircuitConfig(config); err != nil {
+		return nil, fmt.Errorf("judge aggregation invalid consensus short-circuit config: %w: %v", ErrAggregationConfig, err)
+	}
+
+	// Adaptive zero-cost fast path. The historical behavior is preserved by the
+	// default threshold (1.0 = unanimous). Workflows may opt into a lower quorum
+	// such as 0.8 to skip the judge when extracted answers already strongly agree.
+	if decision, ok := maybeConsensusAnswerDecision(inputs, config); ok {
+		agreeing := make(map[string]struct{}, len(decision.AgreeingIDs))
+		for _, id := range decision.AgreeingIDs {
+			agreeing[id] = struct{}{}
+		}
 		scores := make(map[string]float64, len(inputs))
 		for _, input := range inputs {
-			if input.AgentID == decision.WinnerAgentID {
+			if _, ok := agreeing[input.AgentID]; ok {
 				scores[input.AgentID] = 1.0
 			} else {
 				scores[input.AgentID] = 0.0
@@ -63,9 +74,10 @@ func (j *JudgeAggregator) Aggregate(ctx context.Context, inputs []AgentOutput, c
 			Method:          AggMethodJudge,
 			Winner:          decision.WinnerAgentID,
 			Scores:          scores,
-			Reasoning:       fmt.Sprintf("Unanimous extracted answer %q — short-circuited judge aggregation", decision.Answer),
-			AgreementRatio:  1.0,
+			Reasoning:       fmt.Sprintf("Extracted-answer consensus %d/%d (%.1f%%) on %q met short-circuit threshold %.1f%% — skipped judge LLM call", len(decision.AgreeingIDs), decision.TotalInputs, decision.AgreementRatio*100, decision.Answer, decision.Threshold*100),
+			AgreementRatio:  decision.AgreementRatio,
 			ConsensusAnswer: decision.Answer,
+			DissentingIDs:   append([]string(nil), decision.DissentingIDs...),
 		}, nil
 	}
 

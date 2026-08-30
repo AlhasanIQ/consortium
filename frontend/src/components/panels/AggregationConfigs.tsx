@@ -27,6 +27,10 @@ interface AggregationConfigProps {
   onChange: (config: AggregationConfig) => void;
 }
 
+type CertifiedPeerMatrixConfig = PeerMatrixConfig & {
+  certified_early_stop?: boolean;
+};
+
 const maxTokensFieldStyle = {
   ...INPUT_STYLE,
   fontSize: '13px',
@@ -266,123 +270,164 @@ const PeerMatrixSection: React.FC<{
   loadingModels: boolean;
   disabled?: boolean;
   onChange: (config: AggregationConfig) => void;
-}> = ({ aggregationConfig, models, loadingModels, disabled = false, onChange }) => (
-  <div style={SECTION_STYLE}>
-    <label htmlFor="config-peer-rubric-model" style={SUB_LABEL_STYLE}>
-      Rubric Model
-    </label>
-    <ModelSelector
-      models={models}
-      value={getAggConfig<PeerMatrixConfig>(aggregationConfig).rubric_model || ''}
-      onChange={(v) => onChange(mergeAggConfig<PeerMatrixConfig>(aggregationConfig, { rubric_model: v }))}
-      disabled={loadingModels || disabled}
-      loading={loadingModels}
-      placeholder="Required for dynamic rubric mode"
-    />
-    <div style={{ fontSize: '11px', color: '#888', marginBottom: '8px' }}>
-      Model for dynamic rubric generation. Required when rubric mode is &quot;dynamic&quot;.
-    </div>
+}> = ({ aggregationConfig, models, loadingModels, disabled = false, onChange }) => {
+  const peerConfig = getAggConfig<CertifiedPeerMatrixConfig>(aggregationConfig);
+  return (
+    <div style={SECTION_STYLE}>
+      <label htmlFor="config-peer-rubric-model" style={SUB_LABEL_STYLE}>
+        Rubric Model
+      </label>
+      <ModelSelector
+        models={models}
+        value={peerConfig.rubric_model || ''}
+        onChange={(v) => onChange(mergeAggConfig<PeerMatrixConfig>(aggregationConfig, { rubric_model: v }))}
+        disabled={loadingModels || disabled}
+        loading={loadingModels}
+        placeholder="Required for dynamic rubric mode"
+      />
+      <div style={{ fontSize: '11px', color: '#888', marginBottom: '8px' }}>
+        Model for dynamic rubric generation. Required when rubric mode is &quot;dynamic&quot;.
+      </div>
 
-    <label htmlFor="config-peer-normalization" style={SUB_LABEL_STYLE}>
-      Normalization
-    </label>
-    <select
-      id="config-peer-normalization"
-      value={getAggConfig<PeerMatrixConfig>(aggregationConfig).normalization || 'none'}
-      onChange={(e) =>
-        onChange(
-          mergeAggConfig<PeerMatrixConfig>(aggregationConfig, {
-            normalization: e.target.value as PeerMatrixConfig['normalization'],
-          }),
-        )
-      }
-      disabled={disabled}
-      style={{
-        ...SELECT_STYLE,
-        fontSize: '13px',
-        marginBottom: '10px',
-      }}
-    >
-      <option value="none">None (Raw scores)</option>
-    </select>
-
-    <label htmlFor="config-peer-rubric-mode" style={SUB_LABEL_STYLE}>
-      Rubric Mode
-    </label>
-    <select
-      id="config-peer-rubric-mode"
-      value={getAggConfig<PeerMatrixConfig>(aggregationConfig).rubric_mode || 'static'}
-      onChange={(e) =>
-        onChange(
-          mergeAggConfig<PeerMatrixConfig>(aggregationConfig, {
-            rubric_mode: e.target.value as PeerMatrixConfig['rubric_mode'],
-          }),
-        )
-      }
-      disabled={disabled}
-      style={{ ...SELECT_STYLE, fontSize: '13px', marginBottom: '10px' }}
-    >
-      <option value="static">Static (fixed rubric)</option>
-      <option value="dynamic">Dynamic (LLM-generated per task)</option>
-    </select>
-
-    <label htmlFor="config-peer-rubric" style={{ ...SUB_LABEL_STYLE, marginTop: '10px' }}>
-      Scoring Rubric (JSON)
-    </label>
-    <textarea
-      id="config-peer-rubric"
-      value={
-        getAggConfig<PeerMatrixConfig>(aggregationConfig).rubric
-          ? JSON.stringify(getAggConfig<PeerMatrixConfig>(aggregationConfig).rubric, null, 2)
-          : ''
-      }
-      onChange={(e) => {
-        try {
-          const parsed = JSON.parse(e.target.value);
-          onChange(mergeAggConfig<PeerMatrixConfig>(aggregationConfig, { rubric: parsed }));
-        } catch {
-          // Invalid JSON - keep the text but don't update config
+      <label htmlFor="config-peer-normalization" style={SUB_LABEL_STYLE}>
+        Normalization
+      </label>
+      <select
+        id="config-peer-normalization"
+        value={peerConfig.normalization || 'none'}
+        onChange={(e) =>
+          onChange(
+            mergeAggConfig<PeerMatrixConfig>(aggregationConfig, {
+              normalization: e.target.value as PeerMatrixConfig['normalization'],
+            }),
+          )
         }
-      }}
-      disabled={disabled}
-      placeholder={`[
+        disabled={disabled}
+        style={{
+          ...SELECT_STYLE,
+          fontSize: '13px',
+          marginBottom: '10px',
+        }}
+      >
+        <option value="none">None (Raw scores)</option>
+      </select>
+
+      <label htmlFor="config-peer-rubric-mode" style={SUB_LABEL_STYLE}>
+        Rubric Mode
+      </label>
+      <select
+        id="config-peer-rubric-mode"
+        value={peerConfig.rubric_mode || 'static'}
+        onChange={(e) =>
+          onChange(
+            mergeAggConfig<PeerMatrixConfig>(aggregationConfig, {
+              rubric_mode: e.target.value as PeerMatrixConfig['rubric_mode'],
+            }),
+          )
+        }
+        disabled={disabled}
+        style={{ ...SELECT_STYLE, fontSize: '13px', marginBottom: '10px' }}
+      >
+        <option value="static">Static (fixed rubric)</option>
+        <option value="dynamic">Dynamic (LLM-generated per task)</option>
+      </select>
+
+      <label
+        htmlFor="config-peer-certified"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          margin: '2px 0 4px',
+          fontSize: '12px',
+          fontWeight: 600,
+          cursor: disabled ? 'default' : 'pointer',
+        }}
+      >
+        <input
+          id="config-peer-certified"
+          type="checkbox"
+          checked={peerConfig.certified_early_stop === true}
+          onChange={(e) =>
+            onChange(
+              mergeAggConfig<CertifiedPeerMatrixConfig>(aggregationConfig, {
+                certified_early_stop: e.target.checked,
+              }),
+            )
+          }
+          disabled={disabled}
+        />
+        Certified progressive evaluation
+      </label>
+      <div
+        style={{
+          fontSize: '11px',
+          lineHeight: 1.45,
+          color: '#666',
+          padding: '7px 8px',
+          marginBottom: '10px',
+          borderLeft: '2px solid #06B6D4',
+          backgroundColor: 'rgba(6, 182, 212, 0.06)',
+        }}
+      >
+        Evaluates balanced rounds and prunes a candidate only when the remaining 1-10 scores mathematically cannot
+        change the winner. No confidence threshold or probabilistic guess.
+      </div>
+
+      <label htmlFor="config-peer-rubric" style={{ ...SUB_LABEL_STYLE, marginTop: '10px' }}>
+        Scoring Rubric (JSON)
+      </label>
+      <textarea
+        id="config-peer-rubric"
+        value={peerConfig.rubric ? JSON.stringify(peerConfig.rubric, null, 2) : ''}
+        onChange={(e) => {
+          try {
+            const parsed = JSON.parse(e.target.value);
+            onChange(mergeAggConfig<PeerMatrixConfig>(aggregationConfig, { rubric: parsed }));
+          } catch {
+            // Invalid JSON - keep the text but don't update config
+          }
+        }}
+        disabled={disabled}
+        placeholder={`[
   {"name": "Logical Soundness", "weight": 0.4, "description": "..."},
   {"name": "Evidence Analysis", "weight": 0.3, "description": "..."}
 ]`}
-      style={{
-        ...TEXTAREA_STYLE,
-        fontSize: '11px',
-        minHeight: '80px',
-      }}
-    />
+        style={{
+          ...TEXTAREA_STYLE,
+          fontSize: '11px',
+          minHeight: '80px',
+        }}
+      />
 
-    <div style={{ fontSize: '12px', color: '#666', marginTop: '5px' }}>
-      Default rubric: Logical Soundness (40%), Evidence Analysis (30%), Completeness (20%), Clarity (10%).
-      <br />
-      Each agent scores all other agents. N agents = N×(N-1) evaluations.
+      <div style={{ fontSize: '12px', color: '#666', marginTop: '5px' }}>
+        Default rubric: Logical Soundness (40%), Evidence Analysis (30%), Completeness (20%), Clarity (10%).
+        <br />
+        N agents = at most N×(N-1) evaluations; certified mode can stop provably irrelevant candidate reviews.
+      </div>
+
+      <label htmlFor="config-peer-max-tokens" style={{ ...SUB_LABEL_STYLE, marginTop: '10px' }}>
+        Max Tokens
+      </label>
+      <input
+        id="config-peer-max-tokens"
+        type="number"
+        min={-1}
+        step={1}
+        value={peerConfig.max_tokens ?? DEFAULT_AGGREGATION_MAX_TOKENS}
+        onChange={(e) =>
+          onChange(
+            mergeAggConfig<PeerMatrixConfig>(aggregationConfig, {
+              max_tokens: parseIntegerOrDefault(e.target.value, DEFAULT_AGGREGATION_MAX_TOKENS),
+            }),
+          )
+        }
+        disabled={disabled}
+        style={repairMaxTokensFieldStyle}
+      />
     </div>
-
-    <label htmlFor="config-peer-max-tokens" style={{ ...SUB_LABEL_STYLE, marginTop: '10px' }}>
-      Max Tokens
-    </label>
-    <input
-      id="config-peer-max-tokens"
-      type="number"
-      min={-1}
-      step={1}
-      value={getAggConfig<PeerMatrixConfig>(aggregationConfig).max_tokens ?? DEFAULT_AGGREGATION_MAX_TOKENS}
-      onChange={(e) =>
-        onChange(
-          mergeAggConfig<PeerMatrixConfig>(aggregationConfig, {
-            max_tokens: parseIntegerOrDefault(e.target.value, DEFAULT_AGGREGATION_MAX_TOKENS),
-          }),
-        )
-      }
-      disabled={disabled}
-      style={repairMaxTokensFieldStyle}
-    />
-  </div>
-);
+  );
+};
 
 const MajorityVoteSection: React.FC<{
   aggregationConfig: AggregationConfig | undefined;

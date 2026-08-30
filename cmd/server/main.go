@@ -28,24 +28,11 @@ import (
 func main() {
 	appenv.LoadLocalEnv()
 
-	// Initialize OpenRouter provider (required)
-	openrouterKey := os.Getenv("OPENROUTER_API_KEY")
-	if openrouterKey == "" {
-		log.Fatal("❌ OPENROUTER_API_KEY is required. Please set it in your .env file.")
-	}
-
-	openrouterConfig := providers.ProviderConfig{
-		Name:    "openrouter",
-		APIKey:  openrouterKey,
-		Timeout: 10 * time.Minute, // Provider transport deadline; node-level timeouts still enforce workflow limits.
-	}
-	openrouterProvider := providers.NewOpenRouterProvider(openrouterConfig)
-
-	// Initialize provider registry
+	// Initialize every provider explicitly configured by the operator.
 	registry := providers.NewRegistry()
-
-	registry.Register(openrouterProvider)
-	log.Println("✅ Registered OpenRouter provider")
+	if err := registerConfiguredProviders(context.Background(), registry); err != nil {
+		log.Fatal(err)
+	}
 
 	// Initialize storage
 	dbPath := os.Getenv("DB_PATH")

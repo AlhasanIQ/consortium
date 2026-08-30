@@ -21,11 +21,23 @@ The output binary is `bin/consortium-release`.
 
 ## Run Locally
 
+Using OpenRouter:
+
 ```bash
 EMBED_FRONTEND=true \
 OPENROUTER_API_KEY=<OPENROUTER_API_KEY> \
 ./bin/consortium-release
 ```
+
+Using a local OpenAI-compatible endpoint instead:
+
+```bash
+EMBED_FRONTEND=true \
+OPENAI_COMPATIBLE_BASE_URL=http://127.0.0.1:11434/v1 \
+./bin/consortium-release
+```
+
+At least one provider must be configured. See [openai-compatible-provider.md](openai-compatible-provider.md) for Ollama, LM Studio, vLLM, model discovery, and fallback-model configuration.
 
 Default bind is `127.0.0.1:8080`.
 
@@ -54,6 +66,7 @@ Consortium v0.1 is not a hardened multi-tenant SaaS boundary.
 - `/v1/*` is the intended external API and requires Consortium API keys.
 - `/api/admin/*` is an operator API. Set `ADMIN_API_TOKEN` before exposing it.
 - `/api/workflows`, `/api/jobs`, and the admin UI are local/operator surfaces in v0.1. They can expose prompts, outputs, workflow configs, traces, metadata, and cost data. Do not expose them to untrusted networks.
+- Job records may contain provider endpoint metadata, prompts, model outputs, and usage data. Treat them as sensitive.
 - The process-local pre-auth limiter uses request IP identity and needs proxy review before internet exposure.
 - CORS defaults are convenient for local development. Set explicit production origins at the proxy or application boundary.
 - SQLite database files, WAL/SHM files, and logs can contain sensitive operational data. Store them in private directories and back them up according to your retention policy.
@@ -124,13 +137,15 @@ Before packaging, CI runs `scripts/audit-release.sh` to prevent known internal d
 
 ## Containers
 
-Build and run the local container:
+Build and run the local container with either provider path. OpenRouter example:
 
 ```bash
 OPENROUTER_API_KEY=<OPENROUTER_API_KEY> \
 ADMIN_API_TOKEN=<long random token> \
 docker compose up --build
 ```
+
+For an OpenAI-compatible endpoint, set `OPENAI_COMPATIBLE_BASE_URL` and optionally `OPENAI_COMPATIBLE_API_KEY` / `OPENAI_COMPATIBLE_MODELS`. The configured base URL must be reachable **from inside the container**, not only from the host loopback namespace.
 
 The container:
 

@@ -2,11 +2,20 @@
 
 Consortium loads `.env` and then `.env.local` at startup.
 
-## Required For Real LLM Runs
+## LLM Providers
 
-| Variable | Description |
-| --- | --- |
-| `OPENROUTER_API_KEY` | OpenRouter API key used by provider-backed workflow nodes. Unit tests and mock-only development do not need it. |
+At least one LLM provider must be configured.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `OPENROUTER_API_KEY` | unset | OpenRouter API key. Configure this for the built-in OpenRouter catalog and hosted model routing. |
+| `OPENAI_COMPATIBLE_BASE_URL` | unset | Optional OpenAI-compatible API root containing `/models` and `/chat/completions`, for example `http://127.0.0.1:11434/v1` for Ollama. |
+| `OPENAI_COMPATIBLE_API_KEY` | unset | Optional bearer token for the compatible endpoint. Local Ollama/LM Studio/vLLM setups commonly leave it empty. |
+| `OPENAI_COMPATIBLE_MODELS` | unset | Optional comma-separated fallback model IDs when the compatible endpoint does not expose `/models`. |
+
+Models discovered or configured through the compatibility provider are exposed to Consortium workflows with the `compatible/` prefix. For example, upstream model `qwen3:8b` becomes `compatible/qwen3:8b`. The prefix prevents collisions with OpenRouter model IDs and is removed before the upstream request is sent.
+
+When `OPENAI_COMPATIBLE_BASE_URL` is configured, startup attempts `/models`. If discovery fails, `OPENAI_COMPATIBLE_MODELS` must provide at least one fallback model. Provider-reported `usage.cost` is preserved when present; generic model discovery does not invent pricing for endpoints that do not publish it.
 
 ## Server
 

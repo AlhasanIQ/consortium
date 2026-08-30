@@ -54,7 +54,7 @@ Status: v0.1. The core workflow runtime is usable, but this is still early softw
 
 - Visual workflow builder and preset workflows.
 - Durable job execution with nested child workflows, retries, replay data, event history, and WebSocket progress.
-- OpenRouter-backed model calls with cost/token accounting.
+- OpenRouter-backed model calls plus OpenAI-compatible local/self-hosted providers such as Ollama, LM Studio, and vLLM.
 - OpenAI-compatible Chat Completions and Responses endpoints under `/v1`.
 - Local admin/operator UI for jobs, workflows, benchmarks, optimization, and API keys.
 - Optional Novomo agent-runtime nodes (`agent_run`, `novo_run` / Superagent).
@@ -84,7 +84,7 @@ See [docs/reasoning-architecture.md](docs/reasoning-architecture.md) for call co
 - Bun 1.3.7 for frontend builds (`.bun-version`)
 - Make
 - POSIX shell tools for local dev scripts (`sh`, `bash`, `lsof`, `curl`, `tail`, `kill`)
-- OpenRouter API key for real LLM calls
+- At least one LLM backend: an OpenRouter API key or an OpenAI-compatible endpoint
 
 Windows users should use WSL for the full local development workflow. Release binaries should run natively once published for the target platform.
 
@@ -109,7 +109,8 @@ git clone https://github.com/AlhasanIQ/consortium.git
 cd consortium
 
 cp .env.example .env
-# Edit .env and set OPENROUTER_API_KEY=<your key>
+# Edit .env and configure OPENROUTER_API_KEY (hosted) or
+# OPENAI_COMPATIBLE_BASE_URL (local/self-hosted).
 
 make frontend-install
 make dev
@@ -129,6 +130,20 @@ make test
 ```
 
 Dev mode uses two ports: Vite serves the live frontend on `FRONTEND_PORT` (default `3000`) and the Go backend serves APIs on `PORT` (default `8080`). Production release builds use a single binary with embedded frontend assets.
+
+### Local / self-hosted models
+
+For an OpenAI-compatible local runtime, point Consortium at the endpoint's `/v1` API root:
+
+```bash
+OPENROUTER_API_KEY=
+OPENAI_COMPATIBLE_BASE_URL=http://127.0.0.1:11434/v1
+make dev
+```
+
+The provider discovers `GET /models` at startup. Models are namespaced inside Consortium as `compatible/<model-id>` so they can coexist safely with OpenRouter models; for example `qwen3:8b` becomes `compatible/qwen3:8b`. If the endpoint does not expose `/models`, set `OPENAI_COMPATIBLE_MODELS` to a comma-separated fallback list.
+
+See [OpenAI-Compatible Provider](docs/openai-compatible-provider.md) for Ollama, LM Studio, vLLM, authentication, request compatibility, and cost-accounting notes.
 
 ## How To
 
@@ -319,7 +334,7 @@ pkg/admin/        Admin/operator API
 pkg/jobs/         Job manager and durable execution coordination
 pkg/workflow/     Workflow types, validation, runners, compiler, runtime
 pkg/storage/      SQLite schema and stores
-pkg/providers/    OpenRouter provider
+pkg/providers/    OpenRouter and OpenAI-compatible provider backends
 pkg/bench/        Benchmark loading and evaluation helpers
 docs/             Public documentation
 scripts/          Local development and release helper scripts
@@ -332,6 +347,7 @@ scripts/          Local development and release helper scripts
 | [Public API](docs/public-api.md) | OpenAI-compatible `/v1` API, model routes, keys, request fields, streaming, background responses, errors, and compatibility limits. |
 | [Workflow system](docs/workflow-system.md) | Workflow DAG architecture, node types, runtime behavior, APIs, events, persistence, and execution contracts. |
 | [Reasoning architecture](docs/reasoning-architecture.md) | Ensemble layers, L1 reasoning primitives, aggregation methods, call counts, model composition, and tuning invariants. |
+| [OpenAI-compatible provider](docs/openai-compatible-provider.md) | Local/self-hosted provider setup, model namespacing, discovery, request compatibility, errors, and cost accounting. |
 | [Deployment](docs/deployment.md) | Release builds, embedded frontend deployment, Docker, reverse proxy notes, and v0.1 production/security limits. |
 | [Environment variables](docs/environment-variables.md) | Runtime configuration for ports, storage, workers, providers, admin auth, tracing, Novomo, and deployment. |
 | [Benchmarks](docs/benchmarks.md) | Benchmark harness usage, result artifacts, failure taxonomy, retry behavior, and experimental `benchloop`. |

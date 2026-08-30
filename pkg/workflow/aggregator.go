@@ -32,6 +32,7 @@ type EvaluationMatrix struct {
 	FinalScores      map[string]float64            `json:"final_scores"`      // Averaged per candidate
 	ReviewerBias     map[string]float64            `json:"reviewer_bias"`     // Bias stats per reviewer
 	InvalidCount     int                           `json:"invalid_count"`     // Number of failed evaluations
+	Certificate      *PeerMatrixCertificate        `json:"certificate,omitempty"` // Exact early-stop proof, when certified mode is enabled
 }
 
 // AggregationResult contains the result of an aggregation operation
@@ -431,6 +432,9 @@ func ValidateAggregationConfig(method AggregationMethod, config map[string]inter
 		}
 		if model, ok := config["judge_model"].(string); ok && strings.TrimSpace(model) != "" {
 			return fmt.Errorf("peer_matrix does not support judge_model; each reviewer must have its own model")
+		}
+		if _, err := peerMatrixCertifiedEarlyStop(config); err != nil {
+			return err
 		}
 		if rubricMode, _ := config["rubric_mode"].(string); strings.EqualFold(rubricMode, "dynamic") {
 			if model, _ := config["rubric_model"].(string); strings.TrimSpace(model) == "" {

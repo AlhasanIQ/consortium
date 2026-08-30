@@ -118,6 +118,10 @@ func (p *PeerMatrixAggregator) Aggregate(ctx context.Context, inputs []AgentOutp
 	if err != nil {
 		return nil, err
 	}
+	certifiedEarlyStop, err := peerMatrixCertifiedEarlyStop(config)
+	if err != nil {
+		return nil, err
+	}
 
 	// Get original prompt from config if available
 	originalPrompt, _ := config["original_prompt"].(string)
@@ -134,23 +138,43 @@ func (p *PeerMatrixAggregator) Aggregate(ctx context.Context, inputs []AgentOutp
 			rubricTokens = tokens
 		}
 	}
+	if certifiedEarlyStop {
+		if err := validateCertifiedPeerMatrixConfig(cfg); err != nil {
+			return nil, err
+		}
+	}
 
-	// Build evaluation tasks: each agent evaluates every other agent
+	// Validate all reviewer models before starting either exhaustive or progressive evaluation.
 	tasks := buildEvalTasks(inputs)
 	if err := ensurePeerReviewerModels(tasks); err != nil {
 		return nil, err
 	}
 
-	// Execute evaluations in parallel with semaphore
-	results := p.executeEvaluations(ctx, tasks, cfg, originalPrompt, llmClient, aggCtx)
+	var results []evalResult
+	var certificate *PeerMatrixCertificate
+	if certifiedEarlyStop {
+		results, certificate, err = p.executeCertifiedEvaluations(ctx, inputs, cfg, originalPrompt, llmClient, aggCtx)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		// Existing exhaustive behavior remains the default.
+		results = p.executeEvaluations(ctx, tasks, cfg, originalPrompt, llmClient, aggCtx)
+	}
 
-	// Build evaluation matrix from results
+	// Build evaluation matrix from the reviews that actually ran. In certified
+	// mode these are observed averages; the certificate proves omitted reviews
+	// cannot change the winner.
 	matrix := buildEvaluationMatrix(results, inputs, cfg.Normalization)
+	matrix.Certificate = certificate
 
-	// Select winner based on final scores
 	winner, winningOutput := selectWinner(matrix.FinalScores, inputs)
+	if certificate != nil && certificate.Certified {
+		winner = certificate.Winner
+		winningOutput = outputForAgent(inputs, winner)
+	}
 
-	// Handle tie-breaker if needed
+	// Handle all-invalid evaluations exactly as the exhaustive implementation did.
 	if winner == "" && len(inputs) > 0 {
 		winner = inputs[0].AgentID
 		winningOutput = inputs[0].Output
@@ -168,13 +192,40 @@ func (p *PeerMatrixAggregator) Aggregate(ctx context.Context, inputs []AgentOutp
 	extractCfg := ParseExtractorConfig(config)
 	agreeRatio, consensus, dissenting := ComputeAgreement(inputs, extractCfg)
 
+	reasoning := fmt.Sprintf("Peer evaluation with %d reviews (%d invalid)", len(results), matrix.InvalidCount)
+	if certificate != nil {
+		if certificate.Certified {
+			marginText := ""
+			if certificate.GuaranteedMargin != nil {
+				marginText = fmt.Sprintf(", guaranteed margin %.4f", *certificate.GuaranteedMargin)
+			}
+			reasoning = fmt.Sprintf(
+				"Certified progressive peer evaluation locked %s after %d/%d reviews; skipped %d (%.1f%%)%s (%d invalid)",
+				certificate.Winner,
+				certificate.CompletedEvaluations,
+				certificate.TotalEvaluations,
+				certificate.SkippedEvaluations,
+				certificate.SavingsRatio*100,
+				marginText,
+				matrix.InvalidCount,
+			)
+		} else {
+			reasoning = fmt.Sprintf(
+				"Certified progressive peer evaluation completed %d/%d reviews without an early winner certificate (%d invalid)",
+				certificate.CompletedEvaluations,
+				certificate.TotalEvaluations,
+				matrix.InvalidCount,
+			)
+		}
+	}
+
 	return &AggregationResult{
 		Output:          winningOutput,
 		Method:          AggMethodPeerMatrix,
 		Winner:          winner,
 		Scores:          matrix.FinalScores,
 		TokensUsed:      totalTokens,
-		Reasoning:       fmt.Sprintf("Peer evaluation with %d reviews (%d invalid)", len(results), matrix.InvalidCount),
+		Reasoning:       reasoning,
 		EvalMatrix:      matrix,
 		AgreementRatio:  agreeRatio,
 		ConsensusAnswer: consensus,
@@ -430,8 +481,10 @@ func (p *PeerMatrixAggregator) executeSingleEvaluation(
 		}
 	}
 
-	// 2. Scores-only: {"scores": {"key": N}}
-	if scores := parseScores(resp.Content); len(scores) > 0 {
+	// 2. Scores-only: {"scores": {"key": N}}. Keep the documented 1-10
+	// contract strict here too; the shared parser historically accepted
+	// out-of-range values in its JSON branch.
+	if scores := parseScores(resp.Content); peerScoresWithinCertifiedRange(scores) {
 		if weighted, matched := calculateWeightedScore(scores, cfg.Rubric); matched {
 			result.Score = weighted
 			result.CriterionScores = scores
@@ -517,15 +570,16 @@ func buildEvaluationMatrix(results []evalResult, inputs []AgentOutput, normaliza
 		}
 	}
 
-	// Calculate final scores (average per candidate)
+	// Calculate final scores in stable task/result order. Iterating nested Go
+	// maps made floating-point summation order nondeterministic across runs.
 	candidateTotals := make(map[string]float64)
 	candidateCounts := make(map[string]int)
-
-	for _, scores := range matrix.NormalizedScores {
-		for candidate, score := range scores {
-			candidateTotals[candidate] += score
-			candidateCounts[candidate]++
+	for _, r := range results {
+		if !r.Valid {
+			continue
 		}
+		candidateTotals[r.CandidateID] += r.Score
+		candidateCounts[r.CandidateID]++
 	}
 
 	for candidate, total := range candidateTotals {
@@ -561,15 +615,16 @@ func selectWinner(finalScores map[string]float64, inputs []AgentOutput) (string,
 	})
 
 	winnerID := sorted[0].id
+	return winnerID, outputForAgent(inputs, winnerID)
+}
 
-	// Find the winner's output
+func outputForAgent(inputs []AgentOutput, agentID string) string {
 	for _, input := range inputs {
-		if input.AgentID == winnerID {
-			return winnerID, input.Output
+		if input.AgentID == agentID {
+			return input.Output
 		}
 	}
-
-	return winnerID, ""
+	return ""
 }
 
 func ensurePeerReviewerModels(tasks []evalTask) error {

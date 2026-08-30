@@ -1,12 +1,17 @@
 import { useState } from 'react';
 import type { AgentState } from '../../../stores/ensembleStore';
 import type { AggregationDetails } from '../../../types/workflow';
+import { PeerMatrixCertificate, type PeerMatrixCertificateData } from './PeerMatrixCertificate';
 
 interface PeerMatrixDetailsProps {
   details: AggregationDetails;
   agents: AgentState[];
   collapsed?: boolean;
 }
+
+type CertifiedEvaluationMatrix = NonNullable<AggregationDetails['evalMatrix']> & {
+  certificate?: PeerMatrixCertificateData;
+};
 
 // Color scale for scores (1-10)
 function getScoreColor(score: number): string {
@@ -23,18 +28,27 @@ function getBiasIndicator(bias: number): { label: string; color: string } | null
   return null;
 }
 
+function evaluationPairKey(reviewerId: string, candidateId: string): string {
+  return `${reviewerId}\u0000${candidateId}`;
+}
+
 export function PeerMatrixDetails({ details, agents, collapsed = true }: PeerMatrixDetailsProps) {
   const [isExpanded, setIsExpanded] = useState(!collapsed);
   const [showNormalized, setShowNormalized] = useState(false); // Default to raw scores - more intuitive
 
   const winnerAgent = agents.find((a) => a.id === details.winner);
-  const evalMatrix = details.evalMatrix;
+  const evalMatrix = details.evalMatrix as CertifiedEvaluationMatrix | undefined;
+  const certificate = evalMatrix?.certificate;
+  const skippedPairKeys = new Set(
+    (certificate?.skipped_pairs || []).map((pair) => evaluationPairKey(pair.reviewer_id, pair.candidate_id)),
+  );
 
   // Get sorted agent IDs from scores or agents list
   const agentIds = agents.map((a) => a.id);
 
   // Helper to get agent by ID
   const getAgent = (id: string) => agents.find((a) => a.id === id);
+  const getAgentName = (id: string) => getAgent(id)?.displayName || id;
 
   // Get scores matrix to use
   const scoresMatrix = showNormalized
@@ -61,6 +75,7 @@ export function PeerMatrixDetails({ details, agents, collapsed = true }: PeerMat
 
   // Use raw final scores when showing raw, otherwise use backend's normalized final scores
   const displayScores = showNormalized ? details.scores || {} : computeFinalScores(evalMatrix?.raw_scores);
+  const hasPrunedReviews = (certificate?.skipped_evaluations || 0) > 0;
 
   return (
     <div
@@ -114,7 +129,9 @@ export function PeerMatrixDetails({ details, agents, collapsed = true }: PeerMat
                 }}
               />
               <span style={{ fontSize: '13px', fontWeight: 500 }}>{winnerAgent.displayName}</span>
-              <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.5)' }}>highest peer rating</span>
+              <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.5)' }}>
+                {certificate?.certified ? 'mathematically locked winner' : 'highest peer rating'}
+              </span>
             </div>
           )}
         </div>
@@ -124,6 +141,8 @@ export function PeerMatrixDetails({ details, agents, collapsed = true }: PeerMat
       {/* Expanded content */}
       {isExpanded && (
         <div style={{ padding: '0 14px 14px' }}>
+          {certificate && <PeerMatrixCertificate certificate={certificate} getAgentName={getAgentName} />}
+
           {/* Final scores bar */}
           <div style={{ marginBottom: '16px' }}>
             <div
@@ -135,7 +154,8 @@ export function PeerMatrixDetails({ details, agents, collapsed = true }: PeerMat
               }}
             >
               <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.5)' }}>
-                Final averaged scores {showNormalized ? '(normalized)' : '(raw)'}:
+                {hasPrunedReviews ? 'Observed averaged scores' : 'Final averaged scores'}{' '}
+                {showNormalized ? '(normalized)' : '(raw)'}:
               </span>
             </div>
             {Object.entries(displayScores)
@@ -229,7 +249,9 @@ export function PeerMatrixDetails({ details, agents, collapsed = true }: PeerMat
                   marginBottom: '10px',
                 }}
               >
-                <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.5)' }}>Evaluation matrix (N×N):</span>
+                <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.5)' }}>
+                  Evaluation matrix {hasPrunedReviews ? '(executed + certified skips)' : '(N×N)'}:
+                </span>
                 <button
                   type="button"
                   onClick={() => setShowNormalized(!showNormalized)}
@@ -339,6 +361,7 @@ export function PeerMatrixDetails({ details, agents, collapsed = true }: PeerMat
                           {agentIds.map((candidateId) => {
                             const isSelf = reviewerId === candidateId;
                             const score = reviewerScores[candidateId];
+                            const wasSkipped = skippedPairKeys.has(evaluationPairKey(reviewerId, candidateId));
 
                             return (
                               <td
@@ -378,8 +401,27 @@ export function PeerMatrixDetails({ details, agents, collapsed = true }: PeerMat
                                   >
                                     {score.toFixed(1)}
                                   </span>
+                                ) : wasSkipped ? (
+                                  <span
+                                    title="Skipped because the candidate was mathematically eliminated"
+                                    style={{
+                                      display: 'inline-block',
+                                      minWidth: '28px',
+                                      height: '24px',
+                                      padding: '0 4px',
+                                      lineHeight: '24px',
+                                      backgroundColor: 'rgba(6, 182, 212, 0.1)',
+                                      border: '1px dashed rgba(6, 182, 212, 0.3)',
+                                      borderRadius: '3px',
+                                      color: 'rgba(103, 232, 249, 0.75)',
+                                      fontSize: '9px',
+                                    }}
+                                  >
+                                    skip
+                                  </span>
                                 ) : (
                                   <span
+                                    title="Evaluation attempted but no valid score was produced"
                                     style={{
                                       display: 'inline-block',
                                       width: '28px',
@@ -412,6 +454,7 @@ export function PeerMatrixDetails({ details, agents, collapsed = true }: PeerMat
                   marginTop: '10px',
                   fontSize: '10px',
                   color: 'rgba(255,255,255,0.5)',
+                  flexWrap: 'wrap',
                 }}
               >
                 <span>Score scale:</span>
@@ -461,6 +504,7 @@ export function PeerMatrixDetails({ details, agents, collapsed = true }: PeerMat
                     8-10
                   </span>
                 </div>
+                {hasPrunedReviews && <span style={{ color: 'rgba(103, 232, 249, 0.75)' }}>skip = certified prune</span>}
               </div>
 
               {/* Invalid count */}
